@@ -54,7 +54,7 @@ export declare class CodeBuddyAdapter extends LlmAdapter {
     private readonly catalog;
     private readonly accounts;
     private readonly auth;
-    private readonly disabledCache;
+    private readonly deny;
     /** Last verified image capability, keyed `${region}:${model}`. */
     private readonly knownVision;
     constructor(options?: CodeBuddyAdapterOptions);
@@ -81,28 +81,11 @@ export declare class CodeBuddyAdapter extends LlmAdapter {
     /** Whether the resolved model accepts images (drives whether pixels are sent). */
     private modelVision;
     /**
-     * Resolve a feed's images into base64 for the CLI's vision blocks.
-     *
-     * Only references the host can actually read become pixels; the rest keep
-     * their handle text, so one unreadable attachment degrades that part of the
-     * prompt instead of failing the whole turn.
-     */
-    private resolveFeedImages;
-    /**
-     * Images carried by the messages the inner session has not seen yet.
-     *
-     * Tool results are included: `read_image` hands its pixels back through the
-     * MCP tool result, not through the prompt text, so this tail is the only
-     * place the bytes can come from.
-     */
-    private resolveTurnImages;
-    private resolveImages;
-    /**
      * Turn a feed into what one CLI turn receives.
      *
-     * A text-only feed stays a plain string (the historical shape). A feed with
+     * A text-only feed stays a plain string (the historical shape); a feed with
      * readable images becomes the SDK's `ContentBlock[]`, because that is the
-     * only shape the CLI sends to the model as pixels.
+     * only shape the CLI sends to the model as pixels. See {@link buildVisionFeed}.
      */
     private buildFeed;
     /**

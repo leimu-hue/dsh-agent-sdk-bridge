@@ -116,4 +116,3 @@ export declare function emptyCatalogFallback(brand: QoderBrand, state: {
 export declare function priceFactorOf(entry: {
     priceFactor?: number;
 }): number | undefined;
-export declare function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T>;

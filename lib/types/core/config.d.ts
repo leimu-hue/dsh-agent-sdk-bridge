@@ -321,24 +321,11 @@ export type LiveConfig = {
 /**
  * Wrap a parsed config as {@link LiveConfig}.
  *
- * Every normalizer {@link resolveConfig} applies is applied here too — the live
- * wrapper is the same interpretation of the same raw fields, just deferred —
- * and `resolveConfig` is implemented on top of it, so the two can never
- * disagree about what a given input means.
+ * Every normalizer below is the single interpretation of a raw field: the
+ * running plugin reads its config only through this view, so a value can never
+ * be resolved one way at mount and another way later.
  *
  * @param config - the parsed plugin config, possibly partial or absent.
  * @returns one thunk per resolved field, each reading the live cell.
  */
 export declare function liveConfig(config: ParsedConfig | undefined): LiveConfig;
-/**
- * Apply defaults to a parsed config.
- *
- * A one-shot snapshot of {@link liveConfig}, for a caller that genuinely wants
- * the values as they are right now (a report, a test) rather than a view that
- * keeps following edits. The running plugin does not use it: every option it
- * hands downstream is a thunk, so a volatile edit is never missed.
- *
- * @param config - the parsed plugin config, possibly partial.
- * @returns the same values with every default filled in.
- */
-export declare function resolveConfig(config: ParsedConfig | undefined): ResolvedConfig;

@@ -44,8 +44,6 @@ export interface BrandProfile {
     cliCommands: readonly string[];
     /** Per-user state directory, relative to the home directory. */
     configDirName: string;
-    /** Setup helper shipped under `scripts/`, or null when login is in-process. */
-    setupScript: string | null;
     /** Whether the static Qoder catalog is a valid fallback. */
     staticCatalog: boolean;
 }

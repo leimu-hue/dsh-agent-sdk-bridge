@@ -171,6 +171,7 @@ export declare class HostToolRegistry {
     /** Names currently installed, for diagnostics and tests. */
     names(): string[];
 }
+/** One unit of a turn's output: a stream chunk, or the end marker. */
 export type QueueItem = {
     kind: 'chunk';
     chunk: StreamChunk;
@@ -179,16 +180,27 @@ export type QueueItem = {
     reason: FinishReason;
     usage?: TokenUsage;
 };
-/** Unbounded FIFO the consumer pushes into and the active turn pumps out. */
-export declare class TurnQueue implements AsyncIterable<QueueItem> {
+/**
+ * Unbounded FIFO the consumer pushes into and the active turn pumps out.
+ *
+ * One implementation for the two shapes the backends need: an
+ * `AsyncIterable` (Qoder, CodeBuddy pump it with `for await`) and a plain
+ * `next()` read (MiniMax's ACP session, which races every read against the
+ * turn's abort signal). Closing it releases a parked reader, so a session that
+ * is torn down mid-turn never leaves one waiting.
+ */
+export declare class TurnQueue<T = QueueItem> implements AsyncIterable<T> {
     private readonly items;
     private resolve;
     private closed;
-    push(item: QueueItem): void;
+    push(item: T): void;
     close(): void;
-    [Symbol.asyncIterator](): AsyncIterator<QueueItem>;
+    [Symbol.asyncIterator](): AsyncIterator<T>;
+    /** The next item, or undefined once the queue is closed and drained. */
+    next(): Promise<T | undefined>;
     /** Whether the turn already ended; late pushes are dropped. */
     get isClosed(): boolean;
+    private pump;
 }
 /**
  * The tool-result bridge between an inner CLI and the host.

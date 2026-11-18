@@ -25,7 +25,13 @@ export declare const CODEBUDDY_DEFAULT_MAX_TOKENS = 32000;
 export declare const CODEBUDDY_CACHE_TTL_MS = 300000;
 /** Give up on one CodeBuddy control round trip after this long. */
 export declare const CODEBUDDY_FETCH_TIMEOUT_MS = 30000;
-/** Whether a CLI tool name belongs to this plugin's MCP server. */
+/**
+ * Whether a CLI tool name belongs to this plugin's MCP server.
+ *
+ * Both spellings count: the key above is the normalised one this plugin now
+ * registers, while a name already in flight can still carry the hyphenated
+ * form the server used to be keyed under. See {@link mcpToolPrefixes}.
+ */
 export declare function isHostTool(toolName: string): boolean;
 /**
  * The host-side tool name, with every MCP namespace layer removed.

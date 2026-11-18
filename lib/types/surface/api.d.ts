@@ -5,12 +5,16 @@
  * fetched live from the provider, while the form only carries what the user
  * stored. So the host answers these JSON routes:
  *
- * - `GET <prefix>/models?brand=cn|global|codebuddy` — the account's models,
- *   each with its enabled state and the windows it may use.
+ * - `GET <prefix>/models?brand=cn|global|codebuddy|minimax` — the account's
+ *   models, each with its enabled state and the windows it may use.
  * - `GET <prefix>/usage?brand=...` — the account reading. Qoder returns quota;
  *   CodeBuddy returns the signed-in account (its SDK exposes no quota call).
- * - `GET/POST <prefix>/setup` — the Qoder CLI install/login/uninstall helper.
- * - `GET/POST <prefix>/auth` — CodeBuddy browser login/logout per region.
+ * - `GET/POST <prefix>/auth` — CodeBuddy and MiniMax browser login/logout.
+ *
+ * Installing a provider's CLI is deliberately absent: the flags, versions and
+ * postinstall scripts belong to each vendor and change with their releases, so
+ * the page reports what the machine is missing and leaves installing it to the
+ * user rather than pinning a command that will be wrong next month.
  *
  * Config writes deliberately do NOT come through here. The browser half holds
  * a revision-fenced form for this plugin's namespace (`ctx.configForms`), and

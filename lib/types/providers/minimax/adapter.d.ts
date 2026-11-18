@@ -54,7 +54,7 @@ export declare class MinimaxAdapter extends LlmAdapter {
     private readonly catalog;
     private readonly auth;
     private readonly mcpServer;
-    private readonly disabledCache;
+    private readonly deny;
     /** Last verified image capability, keyed `${region}:${model}`. */
     private readonly knownVision;
     constructor(options?: MinimaxAdapterOptions);
@@ -100,21 +100,11 @@ export declare class MinimaxAdapter extends LlmAdapter {
     /**
      * Turn a feed into what one ACP prompt carries.
      *
-     * A text-only feed stays a plain string (the historical shape). A feed with
+     * A text-only feed stays a plain string (the historical shape); a feed with
      * readable images becomes ACP content blocks, because an image block is the
-     * only thing the agent receives as pixels. An image the host could not read
-     * keeps its handle text, so it degrades one part instead of failing the turn.
+     * only thing the agent receives as pixels. See {@link buildVisionFeed}.
      */
     private buildFeed;
-    /**
-     * Images carried by the messages the inner session has not seen yet.
-     *
-     * Tool results are included: `read_image` hands its pixels back through the
-     * ACP tool result, not through the prompt text, so this tail is the only
-     * place the bytes can come from.
-     */
-    private resolveTurnImages;
-    private resolveImages;
     private cwdOf;
     close(): void;
 }

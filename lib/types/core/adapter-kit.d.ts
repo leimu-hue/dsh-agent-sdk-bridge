@@ -8,9 +8,13 @@
  *
  * @module dsh-agent-sdk-bridge/core/adapter-kit
  */
-import type { LlmModelReasoningInfo, RequestMessage } from '@deepseek-ai/dsh-llm';
+import type { LlmModelInfo, LlmModelReasoningInfo, RequestMessage } from '@deepseek-ai/dsh-llm';
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
-import type { Feed } from './render.ts';
+import type { ResolvedImages } from './host-session.ts';
+import type { Feed, ImagePathResolver } from './render.ts';
+/** Empty values, so an unset option allocates nothing per read. */
+export declare const NO_MODELS: readonly string[];
+export declare const NO_ALIASES: Readonly<Record<string, string>>;
 /**
  * Read one durable image occurrence into the bytes a request sends.
  * Implemented over `ctx.attachments`; returns undefined when the object is
@@ -20,6 +24,84 @@ export type ImageRequestReader = (ref: ImageAttachmentRef, signal?: AbortSignal)
     bytes: Uint8Array;
     mediaType: string;
 } | undefined>;
+/**
+ * Map a harness-side model id onto a provider's own model value.
+ *
+ * A configured alias always wins, under either spelling of the id; then the
+ * provider's own `prefix-` form is unwrapped. `fallback` answers an id that
+ * unwraps to nothing at all.
+ *
+ * @param model - the id the harness addressed the route with.
+ * @param aliases - user-configured aliases for this provider.
+ * @param prefix - the provider's own id prefix, with its trailing dash.
+ * @param fallback - the value an empty remainder maps to.
+ */
+export declare function resolveAliasedModelId(model: string, aliases: Readonly<Record<string, string>>, prefix: string, fallback?: string): string;
+/**
+ * A deny-list as the set a per-model lookup needs, memoized per scope.
+ *
+ * The live config hands out a fresh array on every read, so the memo compares
+ * by content: rebuilding the set per lookup would turn each model toggle into
+ * a linear scan of the list. The scope is a login region for the providers
+ * whose deny-list differs per region.
+ */
+export declare class DenyList<K extends string = string> {
+    private readonly perScope;
+    /** The current membership of `scope`'s list, rebuilt only when it changed. */
+    of(scope: K, source: readonly string[]): ReadonlySet<string>;
+}
+/** One catalog entry, as every provider describes it to the harness. */
+export interface ModelListItem {
+    id: string;
+    name: string;
+    description?: string;
+    vision?: boolean;
+}
+/**
+ * One picker row. The three providers differ only in which field carries the
+ * image capability (`vision`, `isVl`), so callers normalize that first.
+ */
+export declare function modelInfo(provider: string, model: ModelListItem): LlmModelInfo;
+/**
+ * Resolve image references into base64 request bytes.
+ *
+ * Only references the host can actually read become pixels; the rest keep their
+ * handle text, so one unreadable attachment degrades that part of the prompt
+ * instead of failing the whole turn.
+ *
+ * @param refs - the occurrences to read, in block order.
+ * @param vision - whether the resolved model accepts images at all.
+ * @param readImage - the host's reader; absent when no attachment store exists.
+ * @param signal - the turn's abort signal.
+ */
+export declare function resolveImages(refs: readonly ImageAttachmentRef[], vision: boolean, readImage: ImageRequestReader | undefined, signal?: AbortSignal): Promise<ResolvedImages>;
+/**
+ * Images carried by the messages the inner session has not seen yet.
+ *
+ * Tool results are included: `read_image` hands its pixels back through the MCP
+ * tool result, not through the prompt text, so this tail is the only place the
+ * bytes can come from.
+ */
+export declare function resolveTurnImages(tail: readonly RequestMessage[], vision: boolean, readImage: ImageRequestReader | undefined, signal?: AbortSignal): Promise<ResolvedImages>;
+/** How one provider wraps the two things a feed can carry. */
+export interface VisionBlockSink<TBlock> {
+    text(text: string): TBlock;
+    image(data: string, mediaType: string): TBlock;
+}
+/**
+ * Turn a feed into what one CLI turn receives, in a provider's block shape.
+ *
+ * A text-only feed stays a plain string (the historical shape). A feed with
+ * readable images becomes a block list, because that is the only shape the
+ * CLIs send to the model as pixels. An image the host could not read keeps its
+ * handle text, so it degrades one part instead of failing the turn.
+ */
+export declare function buildVisionFeed<TBlock>(feed: Feed, vision: boolean, options: {
+    imagePath?: ImagePathResolver;
+    readImage?: ImageRequestReader;
+    signal?: AbortSignal;
+    blocks: VisionBlockSink<TBlock>;
+}): Promise<string | TBlock[]>;
 /**
  * The strongest level a model offers.
  *

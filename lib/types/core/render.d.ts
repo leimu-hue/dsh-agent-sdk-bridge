@@ -42,13 +42,6 @@ export type Feed = string | FeedPart[];
  * placeholder text on every route, so re-sending those pixels would undo it.
  */
 export declare function imageRefs(blocks: readonly ContentBlock[]): ImageAttachmentRef[];
-/** Render one content-block list as plain text; non-text blocks get handles. */
-export declare function renderBlocks(blocks: readonly ContentBlock[], imagePath?: ImagePathResolver): string;
-/**
- * Render one request message with its role tag. A request-only user input has
- * no durable identity or source, so it reads exactly like a user message.
- */
-export declare function renderMessage(message: RequestMessage, imagePath?: ImagePathResolver): string;
 /**
  * Join feed sections into one feed. While no section carries an image the
  * result is the historical text shape, sections separated by a blank line;
@@ -56,8 +49,6 @@ export declare function renderMessage(message: RequestMessage, imagePath?: Image
  * merged into the parts before and after.
  */
 export declare function joinFeeds(sections: readonly Feed[]): Feed;
-/** Render a block list as parts, keeping image occurrences as their references. */
-export declare function blockParts(blocks: readonly ContentBlock[]): FeedPart[];
 /**
  * Index where the message list's current turn starts: everything after the
  * last assistant reply is new content the inner session has not seen, so its
@@ -124,5 +115,3 @@ export declare function renderInitialFeed(system: string | undefined, messages: 
 export declare function renderUserTurn(blocks: readonly ContentBlock[]): Feed;
 /** Render an in-place-updated message (runtime-context snapshots and the like). */
 export declare function renderRefreshed(message: RequestMessage): Feed;
-/** Render a host system-prompt update mid-session. */
-export declare function renderSystemUpdate(system: string): string;

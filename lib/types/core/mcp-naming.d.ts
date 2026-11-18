@@ -41,3 +41,19 @@ export declare function stripMcpNamespace(name: string, prefixes: readonly strin
  *   collapse to a single entry when the name is already alphanumeric.
  */
 export declare function mcpToolPrefixes(serverName: string): string[];
+/**
+ * Whether a CLI tool name belongs to one host MCP server, in any spelling.
+ *
+ * @param name - the tool name as the CLI's `tool_use` block carried it.
+ * @param serverName - the name the server was registered with.
+ * @returns whether a namespace layer, and a tool name, are both there.
+ */
+export declare function isHostToolName(name: string, serverName: string): boolean;
+/**
+ * The bare host tool name, or the input unchanged when no layer matched.
+ *
+ * @param name - the tool name as the CLI's `tool_use` block carried it.
+ * @param serverName - the name the server was registered with.
+ * @returns the name the host dispatches on.
+ */
+export declare function bareHostToolName(name: string, serverName: string): string;
