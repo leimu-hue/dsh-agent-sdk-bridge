@@ -80,6 +80,9 @@ npm install -g @qoder-ai/qodercli       && qodercli login    # 国际版
   （通过其账号页使用的计费接口读取）。
 - **模型清单**：来自账号实时目录，逐个启用 / 关闭、指定上下文窗口；倍率取自上游报价。
 - **高级设置**：并发会话数、目录缓存、超时、默认思考档位、模型别名、分组名称等，可折叠。
+  其中 `maxSessions` 只约束**空闲**会话，正在进行的轮次不会被驱逐；
+  `disposeDrainSeconds`（默认 120 秒）决定插件被重载/停用时给进行中轮次留多少时间跑完，
+  `0` 表示立即关闭（会截断正在生成的回答）；`traceEnabled` 控制插件自身的日志。
 - **CLI 提示**：Qoder 页面底部显示该 CLI 的安装与登录命令，以及本机是否已检测到
   它；插件不安装、不登录，命令以文本给出。
 - 再次打开页面时**先显示上次快照**，模型与账户在后台更新，不再每次都停在「正在读取」。
@@ -121,6 +124,21 @@ npm install -g @qoder-ai/qodercli       && qodercli login    # 国际版
 ```
 
 各个 provider 的模型开关、窗口和别名是**分开的字段**；并发会话数、超时、思考档位等运行参数共享。
+
+## 排查：对话「突然中断」
+
+插件把会话启停、轮次结束与插件装载写进 `~/.dsh/agent-sdk-bridge/bridge.log`
+（JSONL，每行带毫秒时间戳、`boot`（本次模块装载标识）与 `pid`，4 MB 轮转一次，由
+`traceEnabled` 开关控制）。「重新连接」类问题先看这里：
+
+| 日志里出现 | 含义 |
+|---|---|
+| `apply` 的 `n` 变成 2 或 `boot` 变化 | 插件 entry 被**重建**了（不是热更新），当轮会被中断 |
+| 只有 `volatile-update`、没有新的 `apply` | 设置是**热更新**，没有重启，也就不会打断对话 |
+| `session/drain` 后跟 `turn/end kind=stop` | 重载时正在跑的一轮被放行到自然结束，回答完整 |
+| `turn/end kind=aborted code=ABORTED` | 会话被宿主关闭（重载/回收/换账号），不是故障，重发即可继续 |
+| `session/stream-ended` | 上游流自己结束了（真实断流），这才会报 `STREAM_CLOSED` |
+| `session/spawn` / `session/close` 的 `aliveMs` | 一个内层子进程的完整生命周期 |
 
 ## 免责声明
 

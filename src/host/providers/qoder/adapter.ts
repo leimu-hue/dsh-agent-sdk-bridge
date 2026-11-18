@@ -62,6 +62,14 @@ export interface QoderAdapterOptions {
   toolResultTimeoutMs?: Live<number>
   /** How long the inner process gets to acknowledge an abort. */
   abortGraceMs?: Live<number>
+  /**
+   * How long an in-flight turn may keep running after a close was requested.
+   *
+   * The plugin passes its `disposeDrainSeconds` here; `0` restores the old
+   * "kill immediately" behaviour, which truncates the answer and reports it as
+   * a stream failure.
+   */
+  drainMs?: Live<number>
   /** Maximum inner turns for one side-channel request. */
   coldMaxTurns?: Live<number>
   /** How long one CLI catalog fetch may take before the static fallback. */
@@ -266,6 +274,7 @@ export class QoderAdapter extends LlmAdapter {
     this.sessions = new QoderSessionManager(options.maxSessions ?? DEFAULT_MAX_SESSIONS, {
       toolResultTimeoutMs: options.toolResultTimeoutMs,
       abortGraceMs: options.abortGraceMs,
+      drainMs: options.drainMs,
       coldMaxTurns: options.coldMaxTurns,
       brand: this.brand,
     })
@@ -393,11 +402,13 @@ export class QoderAdapter extends LlmAdapter {
    * and quota caches describe that same old account. Signing out has to drop
    * the sessions; signing in has to drop all four, or the page keeps showing
    * the previous account until the process restarts.
+   *
+   * The pool stays usable: this is a credential change, not a teardown.
    */
   resetAccount(): void {
     this.catalog.invalidate()
     this.usage.invalidate()
-    this.sessions.closeAll()
+    this.sessions.closeAll('account')
     discardSdk(this.brand)
   }
 
@@ -694,12 +705,18 @@ export class QoderAdapter extends LlmAdapter {
    * the signed-out state honestly.
    */
   closeSessions(): void {
-    this.sessions.closeAll()
+    this.sessions.closeAll('account')
   }
 
-  /** Tear down every warm inner session (plugin dispose). */
+  /**
+   * Tear down every warm inner session (plugin dispose).
+   *
+   * Sealed rather than merely cleared: a step prepared before the unload can
+   * still be retried through this adapter instance, and a fresh session created
+   * here would outlive every owner it has.
+   */
   close(): void {
-    this.sessions.closeAll()
+    this.sessions.seal('dispose')
   }
 }
 

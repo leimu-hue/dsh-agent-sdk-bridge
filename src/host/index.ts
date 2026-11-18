@@ -34,6 +34,7 @@ import type { BrandId } from './core/brand.ts'
 import { BRANDS } from './core/brand.ts'
 import type { LiveConfig, ParsedConfig } from './core/config.ts'
 import { Config as ConfigSchema, liveConfig } from './core/config.ts'
+import { BOOT_ID, setTraceGate, trace } from './infra/log.ts'
 
 /**
  * The web carrier this plugin mounts its settings API on.
@@ -106,6 +107,8 @@ export type { UsageSnapshot } from './providers/qoder/usage.ts'
 export { QoderSession, QoderSessionManager } from './providers/qoder/session.ts'
 export type { SessionModelPolicy, SessionRuntimeOptions } from './providers/qoder/session.ts'
 export { ToolResultPairing } from './core/host-session.ts'
+export { CloseGate, DEFAULT_DRAIN_MS, DEFAULT_SESSION_IDLE_MS, closeFinishReason } from './core/lifecycle.ts'
+export type { CloseCause, PoolSession } from './core/lifecycle.ts'
 export { NARROW_CHARS_PER_TOKEN, WIDE_CHARS_PER_TOKEN, countWideChars, estimateTextTokens, isWideChar } from './core/tokens.ts'
 export { QODER_MODELS, MODEL_ALIASES, resolveQoderModelId, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_TOKENS } from './core/catalog.ts'
 export { QoderModelCatalog, priceFactorOf } from './providers/qoder/models.ts'
@@ -148,6 +151,17 @@ const STRUCTURAL_FIELDS: ReadonlySet<string> = new Set([
   'cnEnabled', 'intlEnabled', 'codebuddyEnabled',
   'displayName', 'intlDisplayName', 'codebuddyDisplayName',
 ])
+
+/**
+ * How many times this module's `apply()` has run in this process.
+ *
+ * A volatile-only settings edit is committed into the running plugin and does
+ * NOT re-enter `apply()`, so this counter is the only direct evidence of an
+ * entry rebuild — the question a "the conversation dropped right after I saved
+ * settings" report turns on. It is logged with the boot id, which changes when
+ * the module is re-evaluated at all.
+ */
+let applyCount = 0
 
 /** The configurable-provider directory rows for the enabled editions. */
 function directoryFor(live: LiveConfig): {
@@ -197,6 +211,12 @@ export function apply(ctx: Context, config: ParsedConfig): void {
   let attachments: AttachmentStore | undefined
   let filesystem: FileSystemService | undefined
 
+  // `apply()` running again means the loader rebuilt this entry rather than
+  // committing a volatile edit in place. See {@link applyCount}.
+  setTraceGate(live.traceEnabled)
+  applyCount += 1
+  trace('apply', { n: applyCount })
+
   /**
    * Everything both editions share.
    *
@@ -211,6 +231,7 @@ export function apply(ctx: Context, config: ParsedConfig): void {
     modelCacheTtlMs: live.modelCacheTtlMs,
     toolResultTimeoutMs: live.toolResultTimeoutMs,
     abortGraceMs: live.abortGraceMs,
+    drainMs: live.disposeDrainMs,
     coldMaxTurns: live.coldMaxTurns,
     catalogFetchTimeoutMs: live.catalogFetchTimeoutMs,
     defaultMaxTokens: live.defaultMaxTokens,
@@ -269,6 +290,7 @@ export function apply(ctx: Context, config: ParsedConfig): void {
       catalogFetchTimeoutMs: live.catalogFetchTimeoutMs,
       toolResultTimeoutMs: live.toolResultTimeoutMs,
       abortGraceMs: live.abortGraceMs,
+      drainMs: live.disposeDrainMs,
       defaultMaxTokens: live.defaultMaxTokens,
       defaultReasoningEffort: live.defaultReasoningEffort,
       displayName: live.codebuddyDisplayName,
@@ -347,6 +369,9 @@ export function apply(ctx: Context, config: ParsedConfig): void {
    * the route set, the picker labels and the enabled editions can follow it.
    */
   ctx.on('loader/volatile-update', (paths: readonly (readonly string[])[]) => {
+    // Paired with the `apply` line, this is what tells a hot update from an
+    // entry rebuild when a saved setting is followed by a dropped turn.
+    trace('volatile-update', { paths: paths.map(path => path.map(String).join('.')) })
     if (!paths.some(path => STRUCTURAL_FIELDS.has(String(path[0])))) return
     try {
       syncRegistration()
@@ -357,7 +382,13 @@ export function apply(ctx: Context, config: ParsedConfig): void {
 
   // registerAdapter's disposer only withdraws the routes; the warm qodercli
   // subprocesses are owned by the adapters and must close with the plugin.
+  //
+  // `close()` seals the pools rather than merely emptying them, and each
+  // session's own close drains an in-flight turn instead of truncating it — see
+  // `core/lifecycle.ts`. That is why a plugin reload no longer surfaces as a
+  // dropped connection.
   ctx.effect(() => () => {
+    trace('dispose', { n: applyCount, boot: BOOT_ID })
     adapters.cn.close()
     adapters.global.close()
     ;(adapters.codebuddy as CodeBuddyAdapter).close()

@@ -39,6 +39,14 @@ export interface CodeBuddyAdapterOptions {
   catalogFetchTimeoutMs?: Live<number>
   toolResultTimeoutMs?: Live<number>
   abortGraceMs?: Live<number>
+  /**
+   * How long an in-flight turn may keep running after a close was requested.
+   *
+   * The plugin passes its `disposeDrainSeconds` here; `0` restores the old
+   * "kill immediately" behaviour, which truncates the answer and reports it as
+   * a stream failure.
+   */
+  drainMs?: Live<number>
   defaultMaxTokens?: Live<number>
   defaultReasoningEffort?: Live<string | undefined>
   displayName?: Live<string>
@@ -85,6 +93,7 @@ export class CodeBuddyAdapter extends LlmAdapter {
     this.sessions = new CodeBuddySessionManager(options.maxSessions ?? 8, {
       toolResultTimeoutMs: options.toolResultTimeoutMs,
       abortGraceMs: options.abortGraceMs,
+      drainMs: options.drainMs,
     })
     this.catalog = new CodeBuddyCatalog(
       options.region ?? (() => 'global'),
@@ -158,7 +167,9 @@ export class CodeBuddyAdapter extends LlmAdapter {
   startLogin(region: CodeBuddyRegion): ReturnType<CodeBuddyAuth['start']> {
     return this.auth.start(region, ok => {
       if (!ok) return
-      this.sessions.closeAll()
+      // A credential change, not a teardown: the pool keeps serving, but the
+      // processes that loaded the previous account must go.
+      this.sessions.closeAll('account')
       // The warm catalog session was booted with the previous account's
       // credential, so it has to go with the conversations.
       this.catalog.discardControl(region)
@@ -169,7 +180,7 @@ export class CodeBuddyAdapter extends LlmAdapter {
 
   async logout(region: CodeBuddyRegion): ReturnType<CodeBuddyAuth['logout']> {
     const result = await this.auth.logout(region)
-    this.sessions.closeAll()
+    this.sessions.closeAll('account')
     this.catalog.discardControl(region)
     this.invalidateCatalog(region)
     this.invalidateUsage(region)
@@ -398,8 +409,15 @@ export class CodeBuddyAdapter extends LlmAdapter {
     return (options as GenerateOptions & { cwd?: string }).cwd
   }
 
+  /**
+   * Tear down every warm session and the control sessions (plugin dispose).
+   *
+   * The pool is sealed rather than merely cleared: a step prepared before the
+   * unload can still be retried through this adapter instance, and a session
+   * created then would outlive every owner it has.
+   */
   close(): void {
-    this.sessions.closeAll()
+    this.sessions.seal('dispose')
     this.catalog.close()
   }
 }

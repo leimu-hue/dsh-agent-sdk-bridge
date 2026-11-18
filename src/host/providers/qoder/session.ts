@@ -20,8 +20,11 @@ import { createSdkMcpServer } from '@qodercn-ai/qodercn-agent-sdk'
 import type { CanUseTool, Query } from '@qodercn-ai/qodercn-agent-sdk'
 import type { QoderBrand } from '../../core/brand.ts'
 import { cliConflictMessage, cliFailureText, foreignCliOverride, qoderCliOptions, resolveQoderCli } from '../../infra/cli.ts'
+import type { CloseCause } from '../../core/lifecycle.ts'
+import { CloseGate, DEFAULT_DRAIN_MS, closeFinishReason } from '../../core/lifecycle.ts'
 import type { Live } from '../../core/live.ts'
 import { readLive } from '../../core/live.ts'
+import { trace } from '../../infra/log.ts'
 import { bareHostToolName } from '../../core/mcp-naming.ts'
 import { feedImageRefs, feedTextLength, feedWideCharCount, renderInitialFeed } from '../../core/render.ts'
 import { isDaemonConflict, loadSdk, probeDaemon, resetSdk } from '../../infra/sdk.ts'
@@ -79,6 +82,13 @@ export interface SessionRuntimeOptions {
   toolResultTimeoutMs?: Live<number>
   /** How long the inner process gets to acknowledge an abort. */
   abortGraceMs?: Live<number>
+  /**
+   * How long an in-flight turn may keep running after a close was requested.
+   *
+   * Read per close, so a settings edit applies to the next reload rather than
+   * to the process that is already shutting down.
+   */
+  drainMs?: Live<number>
   /** Which edition's SDK and CLI this session speaks to. */
   brand?: QoderBrand
 }
@@ -353,6 +363,19 @@ export class QoderSession {
   private abortPending = false
   private disposed = false
   /**
+   * Deferred-close state: why this session was asked to stop, and whether an
+   * in-flight turn is being allowed to finish first.
+   *
+   * The harness consumes this session's chunks, not the subprocess's, so a turn
+   * that already started streaming can still deliver its answer after the
+   * plugin was unloaded. Killing the CLI at dispose time instead truncated it
+   * and reported `STREAM_CLOSED` — a plugin reload shown as a dropped network
+   * connection. See {@link CloseGate}.
+   */
+  private readonly closeGate: CloseGate
+  /** Wall clock of the spawn, for the close log's lifetime figure. */
+  private spawnedAt: number | undefined
+  /**
    * How the active turn ended, so its cleanup can tell a completed turn (whose
    * unclaimed announcements may still belong to a handler about to fire) from an
    * aborted or failed one (where the CLI cancelled that dispatch).
@@ -422,6 +445,8 @@ export class QoderSession {
   private readonly abortGraceMs: number
   /** Which edition's CLI (and SDK) this session runs on. */
   private readonly brand: QoderBrand
+  /** How long a close waits for the in-flight turn; read per close. */
+  private readonly drainMs: () => number
 
   constructor(
     readonly sessionId: string,
@@ -432,6 +457,22 @@ export class QoderSession {
     this.toolResultTimeoutMs = readLive(runtime.toolResultTimeoutMs, DEFAULT_TOOL_RESULT_TIMEOUT_MS)
     this.abortGraceMs = readLive(runtime.abortGraceMs, DEFAULT_ABORT_GRACE_MS)
     this.brand = runtime.brand ?? 'cn'
+    this.drainMs = () => readLive(runtime.drainMs, DEFAULT_DRAIN_MS)
+    this.closeGate = new CloseGate(
+      this.drainMs,
+      () => { this.teardown() },
+      cause => { this.forceEnd(cause) },
+    )
+  }
+
+  /** Whether a turn is in flight; the pool must never evict such a session. */
+  get busy(): boolean {
+    return this.queue !== null
+  }
+
+  /** Whether this session has been asked to stop and accepts no new turn. */
+  get closing(): CloseCause | undefined {
+    return this.closeGate.cause
   }
 
   /** Spawn the inner process (first stream only) and attach the consumer. */
@@ -503,7 +544,16 @@ export class QoderSession {
         ...this.sessionCwd === undefined ? {} : { cwd: this.sessionCwd },
       },
     })
+    // A close can arrive while the CLI is booting (the plugin is unloaded, the
+    // pool reclaims the slot). Adopting the process then would leave a
+    // subprocess behind that the teardown already ran without.
+    if (this.disposed || this.closeGate.closing) {
+      void q.close().catch(() => undefined)
+      throw new LlmError(`qoder session ${this.sessionId} closed while starting`, 'INVALID_REQUEST')
+    }
     this.q = q
+    this.spawnedAt = Date.now()
+    trace('session/spawn', { session: this.sessionId, brand: this.brand })
     void this.consume(q)
     return q
   }
@@ -609,8 +659,25 @@ export class QoderSession {
     // (a second turn on a session that already has one is an invalid request),
     // and it is valid on the older `string` signature too.
     if (this.queue !== null) throw new LlmError(`qoder session ${this.sessionId} already has a turn in flight`, 'INVALID_REQUEST')
-    if (this.disposed) throw new LlmError(`qoder session ${this.sessionId} was disposed`, 'TRANSPORT')
-    const q = await this.ensureStarted()
+    // A closing session must not be revived by a retry: the pool has already
+    // handed its slot away or the plugin that owned it is gone. `TRANSPORT`
+    // would be the wrong code here — it is in `dsh-llm`'s default retryable set,
+    // so the harness would re-dispatch this step into a session that can never
+    // answer it.
+    if (this.disposed || this.closeGate.closing) {
+      throw new LlmError(`qoder session ${this.sessionId} is closed (${this.closeGate.cause ?? 'disposed'})`, 'INVALID_REQUEST')
+    }
+    let q: Query
+    try {
+      q = await this.ensureStarted()
+    } catch (error) {
+      // The session was closed while its CLI booted: report that close rather
+      // than a start failure, and never adopt the process (see ensureStarted).
+      const cause = this.closeGate.cause
+      if (cause === undefined) throw error
+      yield { type: 'finish', reason: closeFinishReason(cause) }
+      return
+    }
     this.queue = new TurnQueue()
     this.resetTurnState()
     if (feed !== null) {
@@ -658,6 +725,9 @@ export class QoderSession {
       this.queue = null
       this.abortPending = false
       this.feedFallback = undefined
+      // A close that was waiting for this turn may now finish. This is also the
+      // path a host-cancelled turn takes, so a drain never outlives its turn.
+      this.closeGate.settled()
     }
   }
 
@@ -693,14 +763,48 @@ export class QoderSession {
     return true
   }
 
-  /** Tear the inner process down; parked calls die with it. */
-  close(): void {
+  /**
+   * Ask the session to stop serving.
+   *
+   * The request is remembered rather than acted on immediately: an in-flight
+   * turn is allowed to finish (up to `drainMs`), because its chunks are being
+   * consumed by the harness and truncating them turns a plugin reload into a
+   * bogus stream failure. {@link teardown} does the actual work.
+   *
+   * @param cause - why it is closing; decides how an interrupted turn is
+   *   reported and how the close is logged.
+   */
+  close(cause: CloseCause = 'dispose'): void {
+    const outcome = this.closeGate.request(cause, this.busy)
+    if (outcome === 'draining') trace('session/drain', { session: this.sessionId, brand: this.brand, cause })
+  }
+
+  /**
+   * End a turn that outlived its drain window, then let the teardown run.
+   *
+   * The subprocess is about to die, so the turn must not be left waiting for a
+   * `result` frame that will never arrive.
+   */
+  private forceEnd(cause: CloseCause): void {
+    this.endTurn(closeFinishReason(cause))
+  }
+
+  /** Tear the inner process down; parked calls die with it. Runs once. */
+  private teardown(): void {
     if (this.disposed) return
     this.disposed = true
+    const q = this.q
+    this.q = null
     // Parked handlers die with the process, but their promises must not outlive
     // it: dropping the pairing state releases anything still waiting.
     this.pairing.clear()
-    if (this.q !== null) void this.q.close().catch(() => undefined)
+    void q?.close().catch(() => undefined)
+    trace('session/close', {
+      session: this.sessionId,
+      brand: this.brand,
+      cause: this.closeGate.cause ?? 'dispose',
+      aliveMs: this.spawnedAt === undefined ? 0 : Date.now() - this.spawnedAt,
+    })
   }
 
   /**
@@ -818,7 +922,9 @@ export class QoderSession {
   }
 
   private endTurn(reason: FinishReason, usage?: TokenUsage): void {
-    if (this.queue === null) return
+    // A forced close can race the consumer's own end-of-stream report; whichever
+    // arrives second must not append a second turn/end to a queue already closed.
+    if (this.queue === null || this.queue.isClosed) return
     this.turnEndKind = reason.kind
     if (this.textBlock !== undefined) {
       this.emit({ type: 'block-end', index: this.textBlock.index, block: { type: 'text', text: this.textBlock.text } })
@@ -828,6 +934,15 @@ export class QoderSession {
     }
     this.queue.push({ kind: 'turn-end', reason, usage: usage ?? this.usage() })
     this.queue.close()
+    const code = reason.kind === 'error' || reason.kind === 'aborted' ? reason.failure.code : undefined
+    trace('turn/end', {
+      session: this.sessionId,
+      brand: this.brand,
+      kind: reason.kind,
+      ...code === undefined ? {} : { code },
+      chars: this.output.outputChars,
+      ...this.closeGate.cause === undefined ? {} : { cause: this.closeGate.cause },
+    })
   }
 
   private async consume(q: Query): Promise<void> {
@@ -842,6 +957,20 @@ export class QoderSession {
           this.endTurn({ kind: 'error', failure: { message: `qoder session consumer failed: ${String(error)}`, code: 'BACKEND_ERROR' } })
         }
       }
+      // `done` has two meanings, and they must not share an error code. A close
+      // this plugin asked for (reload, eviction, account switch) ends the turn
+      // as `aborted`, so the UI and the retry policy both see "the host moved
+      // this session", not "the provider dropped the connection".
+      const cause = this.closeGate.cause
+      if (cause !== undefined) {
+        this.endTurn(closeFinishReason(cause))
+        return
+      }
+      trace('session/stream-ended', {
+        session: this.sessionId,
+        brand: this.brand,
+        chars: this.output.outputChars,
+      })
       this.endTurn({ kind: 'error', failure: { message: 'qoder session stream ended unexpectedly', code: 'STREAM_CLOSED' } })
     } catch (error) {
       // The SDK's daemon refuses a configuration that changed after it started.
@@ -1108,34 +1237,47 @@ export function isImageAttachFailure(detail: string): boolean {
  */
 export class QoderSessionManager {
   private readonly sessions = new Map<string, QoderSession>()
+  /** Set by {@link seal}: this pool's plugin generation is gone. */
+  private sealed = false
 
   /**
    * @param maxSessions - warm-session cap; read per eviction so a settings edit
    *   applies to the next session that overflows the pool.
    * @param runtime - per-session knobs, resolved when each session is created.
+   * @param create - builds one session; injectable so the pool's eviction and
+   *   sealing rules are testable without spawning a CLI.
    */
   constructor(
     readonly maxSessions: Live<number> = DEFAULT_MAX_SESSIONS,
     private readonly runtime: SessionRuntimeOptions & { coldMaxTurns?: Live<number> } = {},
+    private readonly create: (sessionId: string, model: string) => QoderSession =
+      (sessionId, model) => new QoderSession(sessionId, model, runtime),
   ) {}
 
   /** Existing or fresh warm session for one host session id. */
   forSession(sessionId: string, model: string): QoderSession {
+    // A sealed pool belonged to a plugin generation that is gone. Reviving it
+    // would spawn a subprocess nothing will ever close: the harness can still
+    // hold a `prepareCall()` generation from before the reload and retry its
+    // step through this adapter. See {@link seal}.
+    if (this.sealed) throw new LlmError('qoder 会话池已封存（插件已卸载）', 'INVALID_REQUEST')
     const existing = this.sessions.get(sessionId)
     if (existing !== undefined) {
       this.sessions.delete(sessionId)
       this.sessions.set(sessionId, existing)
       return existing
     }
-    const session = new QoderSession(sessionId, model, this.runtime)
+    const session = this.create(sessionId, model)
     this.sessions.set(sessionId, session)
     const cap = readLive(this.maxSessions, DEFAULT_MAX_SESSIONS)
     while (this.sessions.size > cap) {
-      const oldest = this.sessions.keys().next()
-      if (oldest.done === true) break
-      const victim = this.sessions.get(oldest.value)
-      this.sessions.delete(oldest.value)
-      victim?.close()
+      // Never evict a session with a turn in flight: killing it reports the
+      // turn as a stream failure and throws away an answer that was arriving.
+      const victim = [...this.sessions.entries()]
+        .find(([id, candidate]) => id !== sessionId && !candidate.busy)
+      if (victim === undefined) break
+      this.sessions.delete(victim[0])
+      victim[1].close('evicted')
     }
     return session
   }
@@ -1145,13 +1287,34 @@ export class QoderSessionManager {
     const session = this.sessions.get(sessionId)
     if (session === undefined) return
     this.sessions.delete(sessionId)
-    session.close()
+    session.close('rebuild')
   }
 
-  closeAll(): void {
-    for (const session of this.sessions.values()) session.close()
+  /**
+   * Drop every warm session, keeping the pool usable.
+   *
+   * For a credential change: the processes loaded the old account, and the
+   * conversations are over, but the adapter keeps serving new ones.
+   *
+   * @param cause - why the sessions go; decides how interrupted turns report.
+   */
+  closeAll(cause: CloseCause = 'account'): void {
+    for (const session of this.sessions.values()) session.close(cause)
     this.sessions.clear()
   }
+
+  /**
+   * Drop every warm session and refuse to create more.
+   *
+   * Called from the plugin's dispose effect. `closeAll` alone was not enough:
+   * a retry of a step prepared before the unload would reach this manager and
+   * spawn a fresh subprocess that nothing owns afterwards.
+   */
+  seal(cause: CloseCause = 'dispose'): void {
+    this.sealed = true
+    this.closeAll(cause)
+  }
+
 
   /** One-shot turn with no warm state: side channels and cold rebuilds. */
   async *coldStream(options: GenerateOptions, prompt: string, model?: string): AsyncGenerator<StreamChunk> {

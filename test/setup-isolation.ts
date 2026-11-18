@@ -23,6 +23,9 @@ import { afterAll } from 'vitest'
 const root = mkdtempSync(join(tmpdir(), 'dsh-codebuddy-test-'))
 process.env.DSH_CODUBUDDY_STATE_PATH = join(root, 'codebuddy-state.json')
 process.env.DSH_CODUBUDDY_CLI_DIR = join(root, 'codebuddy-cli')
+// The plugin's own event log defaults into the real home directory; point it at
+// the throwaway root as well, so a test turn never appends to the user's log.
+process.env.DSH_BRIDGE_LOG_PATH = join(root, 'bridge.log')
 
 afterAll(() => {
   rmSync(root, { recursive: true, force: true })

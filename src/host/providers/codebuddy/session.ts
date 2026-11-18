@@ -14,7 +14,7 @@
 
 import { randomBytes, randomUUID } from 'node:crypto'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { EMPTY_RESPONSE_CODE, ToolCallId, textOnlyImageText } from '@deepseek-ai/dsh-llm'
+import { EMPTY_RESPONSE_CODE, LlmError, ToolCallId, textOnlyImageText } from '@deepseek-ai/dsh-llm'
 import type {
   FinishReason, GenerateOptions, StreamChunk, TokenUsage,
 } from '@deepseek-ai/dsh-llm'
@@ -25,11 +25,14 @@ import type { CodeBuddyRegion } from '../../core/brand.ts'
 import { CodeBuddyStateStore, codeBuddyCliDir, withoutCredential } from '../../infra/codebuddy-state.ts'
 import type { CodeBuddySavedUser } from '../../infra/codebuddy-state.ts'
 import { jsonSchemaToShape } from '../../core/jsonschema.ts'
+import type { CloseCause } from '../../core/lifecycle.ts'
+import { CloseGate, DEFAULT_DRAIN_MS, closeFinishReason, unrefTimer } from '../../core/lifecycle.ts'
 import type { Live } from '../../core/live.ts'
 import { readLive } from '../../core/live.ts'
 import { bareHostToolName, isHostToolName } from '../../core/mcp-naming.ts'
 import { inertInput, withTimeout } from '../../core/async.ts'
 import { codeBuddyEnvironment, loadCodeBuddySdk } from '../../infra/sdk.ts'
+import { trace } from '../../infra/log.ts'
 
 /**
  * Literal characters in a channel payload; images contribute pixels, not text.
@@ -335,12 +338,6 @@ export function toCodeBuddyModel(model: RawLanguageModel): CodeBuddyModel {
     ...model.reasoning?.defaultEffort === undefined ? {} : { defaultEffort: model.reasoning.defaultEffort },
     ...priceFactorOf(model) === undefined ? {} : { priceFactor: priceFactorOf(model) as number },
   }
-}
-
-/** Node timers hold the process open unless they are unref'd. */
-function unrefTimer(timer: ReturnType<typeof setTimeout>): void {
-  const handle = timer as unknown as { unref?: () => void }
-  handle.unref?.()
 }
 
 /**
@@ -1075,6 +1072,21 @@ function mergeTurnUsage(previous: TurnUsage | undefined, next: TurnUsage): TurnU
 }
 
 /**
+ * Per-session runtime knobs a warm CodeBuddy session is created with.
+ *
+ * Each value may be a {@link Live} thunk and is resolved when a session is
+ * created, so a settings edit applies to the sessions opened after it.
+ */
+export interface CodeBuddySessionRuntime {
+  /** How long an unpaired MCP tool handler waits before failing its call. */
+  toolResultTimeoutMs?: Live<number>
+  /** How long the inner process gets to acknowledge an abort. */
+  abortGraceMs?: Live<number>
+  /** How long an in-flight turn may keep running after a close was requested. */
+  drainMs?: Live<number>
+}
+
+/**
  * One warm CodeBuddy session for a host session id.
  *
  * Mirrors the Qoder session's shape: the host's tool calls are exposed through
@@ -1100,6 +1112,15 @@ export class CodeBuddySession {
   private registry: HostToolRegistry | null = null
   private queue: TurnQueue | null = null
   private disposed = false
+  /**
+   * Deferred-close state: why this session was asked to stop, and whether an
+   * in-flight turn is finishing first. Same contract as the Qoder session —
+   * a plugin reload used to kill the CLI mid-answer and report the cut stream
+   * as a failure. See {@link CloseGate}.
+   */
+  private readonly closeGate: CloseGate
+  /** Wall clock of the spawn, for the close log's lifetime figure. */
+  private spawnedAt: number | undefined
   private abortPending = false
   private turnEndKind: string | undefined
   private blockIndex = 0
@@ -1151,11 +1172,26 @@ export class CodeBuddySession {
   constructor(
     readonly sessionId: string,
     initialModel: string,
-    runtime: { toolResultTimeoutMs?: Live<number>, abortGraceMs?: Live<number> } = {},
+    runtime: CodeBuddySessionRuntime = {},
   ) {
     this.model = initialModel
     this.toolResultTimeoutMs = readLive(runtime.toolResultTimeoutMs, 120_000)
     this.abortGraceMs = readLive(runtime.abortGraceMs, 5_000)
+    this.closeGate = new CloseGate(
+      () => readLive(runtime.drainMs, DEFAULT_DRAIN_MS),
+      () => { this.teardown() },
+      cause => { this.forceEnd(cause) },
+    )
+  }
+
+  /** Whether a turn is in flight; the pool must never evict such a session. */
+  get busy(): boolean {
+    return this.queue !== null
+  }
+
+  /** Whether this session has been asked to stop and accepts no new turn. */
+  get closing(): CloseCause | undefined {
+    return this.closeGate.cause
   }
 
   /** Point the session at a region, model and optional system prompt. */
@@ -1258,8 +1294,24 @@ export class CodeBuddySession {
   /** Run one host turn; `feed` is new user content, or null for a tool continuation. */
   async *stream(options: GenerateOptions, feed: string | ChannelContent[] | null): AsyncGenerator<StreamChunk> {
     if (this.queue !== null) throw new Error(`CodeBuddy session ${this.sessionId} already has a turn in flight`)
-    if (this.disposed) throw new Error(`CodeBuddy session ${this.sessionId} was disposed`)
-    const session = await this.ensureStarted()
+    // A closing session accepts no new turn: its pool slot is gone or its plugin
+    // generation is. Retrying into it would resurrect a subprocess no one owns.
+    if (this.disposed || this.closeGate.closing) {
+      // `INVALID_REQUEST` is deliberately outside `dsh-llm`'s default retryable
+      // set: re-dispatching into a closing session would only spawn a process
+      // nothing owns.
+      throw new LlmError(`CodeBuddy session ${this.sessionId} is closed (${this.closeGate.cause ?? 'disposed'})`, 'INVALID_REQUEST')
+    }
+    let session: SessionImpl
+    try {
+      session = await this.ensureStarted()
+    } catch (error) {
+      // Closed while the CLI booted: report the close, not a start failure.
+      const cause = this.closeGate.cause
+      if (cause === undefined) throw error
+      yield { type: 'finish', reason: closeFinishReason(cause) }
+      return
+    }
     this.queue = new TurnQueue()
     this.resetTurnState()
     const signal = options.signal
@@ -1301,16 +1353,44 @@ export class CodeBuddySession {
       if (this.turnEndKind === 'aborted' || this.turnEndKind === 'error') this.pairing.forgetUnclaimed()
       this.queue = null
       this.abortPending = false
+      // A close that was waiting for this turn may now finish.
+      this.closeGate.settled()
     }
   }
 
+  /**
+   * Ask the session to stop serving.
+   *
+   * An in-flight turn is allowed to finish first (up to `drainMs`): its chunks
+   * are consumed by the harness, so the answer arrives instead of being
+   * truncated into a bogus stream failure. {@link teardown} does the work.
+   *
+   * @param cause - why it is closing; decides how an interrupted turn reports.
+   */
+  close(cause: CloseCause = 'dispose'): void {
+    const outcome = this.closeGate.request(cause, this.busy)
+    if (outcome === 'draining') trace('session/drain', { session: this.sessionId, brand: 'codebuddy', region: this.region, cause })
+  }
+
+  /** End a turn that outlived its drain window, before the CLI dies. */
+  private forceEnd(cause: CloseCause): void {
+    this.endTurn(closeFinishReason(cause))
+  }
+
   /** Tear the inner CLI down; parked handlers settle with a cancellation. */
-  close(): void {
+  private teardown(): void {
     if (this.disposed) return
     this.disposed = true
     this.pairing.clear()
     this.session?.close()
     this.session = null
+    trace('session/close', {
+      session: this.sessionId,
+      brand: 'codebuddy',
+      region: this.region,
+      cause: this.closeGate.cause ?? 'dispose',
+      aliveMs: this.spawnedAt === undefined ? 0 : Date.now() - this.spawnedAt,
+    })
   }
 
   private async ensureStarted(): Promise<SessionImpl> {
@@ -1357,7 +1437,15 @@ export class CodeBuddySession {
       ...this.systemPrompt === undefined ? {} : { systemPrompt: this.systemPrompt },
       ...this.cwd === undefined ? {} : { cwd: this.cwd },
     })
+    // A close can arrive while the CLI is booting. Adopting the process then
+    // would leave a subprocess the teardown already ran without.
+    if (this.disposed || this.closeGate.closing) {
+      session.close()
+      throw new LlmError(`CodeBuddy session ${this.sessionId} closed while starting`, 'INVALID_REQUEST')
+    }
     this.session = session
+    this.spawnedAt = Date.now()
+    trace('session/spawn', { session: this.sessionId, brand: 'codebuddy', region: this.region })
     return session
   }
 
@@ -1379,8 +1467,25 @@ export class CodeBuddySession {
         this.handle(message)
         if (this.queue === null || this.queue.isClosed) return
       }
+      // The stream ended without a `result` frame. Two very different things
+      // produce that, and they must not share an error code: a close this
+      // plugin asked for (reload, reclaim, account switch) ends the turn as
+      // `aborted`, while an unexplained end stays `STREAM_CLOSED`.
+      const cause = this.closeGate.cause
+      if (cause !== undefined) {
+        this.endTurn(closeFinishReason(cause))
+        return
+      }
+      trace('session/stream-ended', { session: this.sessionId, brand: 'codebuddy', region: this.region })
       this.endTurn({ kind: 'error', failure: { message: 'CodeBuddy session stream ended unexpectedly', code: 'STREAM_CLOSED' } })
     } catch (error) {
+      // A close that races the CLI's own exit surfaces here as a transport
+      // error; it is the close, not a provider failure.
+      const cause = this.closeGate.cause
+      if (cause !== undefined) {
+        this.endTurn(closeFinishReason(cause))
+        return
+      }
       this.endTurn({
         kind: 'error',
         failure: { message: authErrorText(this.region, error), code: 'BACKEND_TURN_ERROR' },
@@ -1613,7 +1718,9 @@ export class CodeBuddySession {
   }
 
   private endTurn(reason: FinishReason): void {
-    if (this.queue === null) return
+    // A forced close can race the consumer's own end-of-stream report; whichever
+    // arrives second must not append a second turn/end to a queue already closed.
+    if (this.queue === null || this.queue.isClosed) return
     this.turnEndKind = reason.kind
     if (this.textBlock !== undefined) {
       this.emit({ type: 'block-end', index: this.textBlock.index, block: { type: 'text', text: this.textBlock.text } })
@@ -1623,6 +1730,15 @@ export class CodeBuddySession {
     }
     this.queue.push({ kind: 'turn-end', reason, usage: this.usage() })
     this.queue.close()
+    const code = reason.kind === 'error' || reason.kind === 'aborted' ? reason.failure.code : undefined
+    trace('turn/end', {
+      session: this.sessionId,
+      brand: 'codebuddy',
+      region: this.region,
+      kind: reason.kind,
+      ...code === undefined ? {} : { code },
+      ...this.closeGate.cause === undefined ? {} : { cause: this.closeGate.cause },
+    })
   }
 }
 
@@ -1654,17 +1770,31 @@ export function renderCodeBuddyResult(blocks: unknown, images?: ResolvedImages):
  */
 export class CodeBuddySessionManager {
   private readonly sessions = new Map<string, { session: CodeBuddySession, region: CodeBuddyRegion }>()
+  /** Set by {@link seal}: this pool's plugin generation is gone. */
+  private sealed = false
 
+  /**
+   * @param maxSessions - warm-session cap; read per eviction so a settings edit
+   *   applies to the next session that overflows the pool.
+   * @param runtime - per-session knobs, resolved when each session is created.
+   * @param create - builds one session; injectable so the pool's rules are
+   *   testable without spawning a CLI.
+   */
   constructor(
     readonly maxSessions: Live<number>,
-    private readonly runtime: { toolResultTimeoutMs?: Live<number>, abortGraceMs?: Live<number> } = {},
+    private readonly runtime: CodeBuddySessionRuntime = {},
+    private readonly create: (sessionId: string, model: string) => CodeBuddySession =
+      (sessionId, model) => new CodeBuddySession(sessionId, model, runtime),
   ) {}
 
   forSession(sessionId: string, region: CodeBuddyRegion, model: string): CodeBuddySession {
+    // A sealed pool belonged to a plugin generation that is gone; reviving it
+    // would spawn a CLI process nothing owns. See {@link seal}.
+    if (this.sealed) throw new LlmError('CodeBuddy 会话池已封存（插件已卸载）', 'INVALID_REQUEST')
     const existing = this.sessions.get(sessionId)
     if (existing !== undefined) {
       if (existing.region !== region) {
-        existing.session.close()
+        existing.session.close('region')
         this.sessions.delete(sessionId)
       } else {
         this.sessions.delete(sessionId)
@@ -1672,15 +1802,17 @@ export class CodeBuddySessionManager {
         return existing.session
       }
     }
-    const session = new CodeBuddySession(sessionId, model, this.runtime)
+    const session = this.create(sessionId, model)
     this.sessions.set(sessionId, { session, region })
     const cap = readLive(this.maxSessions, 8)
     while (this.sessions.size > cap) {
-      const oldest = this.sessions.keys().next()
-      if (oldest.done === true) break
-      const victim = this.sessions.get(oldest.value)
-      this.sessions.delete(oldest.value)
-      victim?.session.close()
+      // Never evict a session with a turn in flight: killing it reports the
+      // turn as a stream failure and discards an answer that was arriving.
+      const victim = [...this.sessions.entries()]
+        .find(([id, entry]) => id !== sessionId && !entry.session.busy)
+      if (victim === undefined) break
+      this.sessions.delete(victim[0])
+      victim[1].session.close('evicted')
     }
     return session
   }
@@ -1689,12 +1821,32 @@ export class CodeBuddySessionManager {
     const entry = this.sessions.get(sessionId)
     if (entry === undefined) return
     this.sessions.delete(sessionId)
-    entry.session.close()
+    entry.session.close('rebuild')
   }
 
-  closeAll(): void {
-    for (const entry of this.sessions.values()) entry.session.close()
+  /**
+   * Drop every warm session, keeping the pool usable.
+   *
+   * A login or logout changes the credentials those processes loaded, so they
+   * cannot answer for the new account; the pool itself keeps serving.
+   *
+   * @param cause - why the sessions go; decides how interrupted turns report.
+   */
+  closeAll(cause: CloseCause = 'account'): void {
+    for (const entry of this.sessions.values()) entry.session.close(cause)
     this.sessions.clear()
+  }
+
+  /**
+   * Drop every warm session and refuse to create more.
+   *
+   * Called from the plugin's dispose effect: a step prepared before the unload
+   * can still be retried through this adapter, and a session created then would
+   * outlive every owner it has.
+   */
+  seal(cause: CloseCause = 'dispose'): void {
+    this.sealed = true
+    this.closeAll(cause)
   }
 }
 
