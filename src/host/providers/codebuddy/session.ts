@@ -76,6 +76,14 @@ export const CODEBUDDY_FETCH_TIMEOUT_MS = 30_000
 const LOGIN_TIMEOUT_MS = 300_000
 /** Bound for clearing stale credentials before a fresh browser login. */
 const LOGOUT_TIMEOUT_MS = 20_000
+/**
+ * How long an unused control session keeps its CLI process.
+ *
+ * The process is what makes a catalog read cheap, but an idle one is memory.
+ * Ten minutes covers a settings visit, a region switch back and the refresh
+ * after a login, and still gives the memory back on its own.
+ */
+const CONTROL_IDLE_MS = 10 * 60_000
 
 /** The session object the SDK's createSession returns (not a named export). */
 type SessionImpl = ReturnType<typeof import('@tencent-ai/agent-sdk').unstable_v2_createSession>
@@ -329,28 +337,36 @@ export function toCodeBuddyModel(model: RawLanguageModel): CodeBuddyModel {
   }
 }
 
-/** Run one short-lived session and hand it to `run`, always closing it. */
-async function withSession<T>(
-  region: CodeBuddyRegion,
-  run: (session: SessionImpl) => Promise<T>,
-  timeoutMs: number,
-  options: { sessionId?: string, model?: string, systemPrompt?: string } = {},
-): Promise<T> {
+/** Node timers hold the process open unless they are unref'd. */
+function unrefTimer(timer: ReturnType<typeof setTimeout>): void {
+  const handle = timer as unknown as { unref?: () => void }
+  handle.unref?.()
+}
+
+/**
+ * Boot one turn-less session for a region, connected and ready to answer.
+ *
+ * `getAvailableModelsRaw()` is a control request, but the SDK gives CodeBuddy
+ * no daemon: every `createSession` is a fresh child process that loads a 24 MB
+ * bundle before it answers. {@link CodeBuddyCatalog} keeps the result warm
+ * instead of paying that boot per read. A session that fails to connect is
+ * closed here, so no caller has to clean up a half-started process.
+ */
+async function openControlSession(region: CodeBuddyRegion, timeoutMs: number): Promise<SessionImpl> {
   const sdk = await loadCodeBuddySdk()
   const session = sdk.unstable_v2_createSession({
     environment: codeBuddyEnvironment(region),
-    sessionId: options.sessionId ?? randomUUID(),
-    ...options.model === undefined ? {} : { model: options.model },
-    ...options.systemPrompt === undefined ? {} : { systemPrompt: options.systemPrompt },
+    sessionId: randomUUID(),
     ...cliEnv(region),
     settingSources: [],
     persistSession: false,
   })
   try {
     await withTimeout(session.connect(), timeoutMs, 'CodeBuddy request')
-    return await withTimeout(run(session), timeoutMs, 'CodeBuddy request')
-  } finally {
+    return session
+  } catch (error) {
     session.close()
+    throw error
   }
 }
 
@@ -360,16 +376,25 @@ async function withSession<T>(
  * CodeBuddy only answers this after the CLI has started, so the read costs one
  * process boot. Results are cached per region and fall back to the last good
  * list when a refresh fails.
+ *
+ * That boot is paid once per region rather than once per refresh: a warm
+ * *control* session answers every later read. It never sends a turn, so it
+ * holds no conversation, and it is deliberately kept out of
+ * `CodeBuddySessionManager` — it is not one of the host's conversations and
+ * must never consume a `maxSessions` slot.
  */
 export class CodeBuddyCatalog {
   private readonly snapshots = new Map<CodeBuddyRegion, { at: number, models: readonly CodeBuddyModel[] }>()
   private readonly inflight = new Map<CodeBuddyRegion, Promise<readonly CodeBuddyModel[]>>()
   private readonly failures = new Map<CodeBuddyRegion, string>()
+  /** Warm control sessions, one per region, released when they go idle. */
+  private readonly controls = new Map<CodeBuddyRegion, { session: SessionImpl, timer: ReturnType<typeof setTimeout> | undefined }>()
 
   constructor(
     private readonly region: Live<CodeBuddyRegion>,
     private readonly ttlMs: Live<number> = CODEBUDDY_CACHE_TTL_MS,
     private readonly timeoutMs: Live<number> = CODEBUDDY_FETCH_TIMEOUT_MS,
+    private readonly controlIdleMs: Live<number> = CONTROL_IDLE_MS,
   ) {}
 
   /**
@@ -419,12 +444,72 @@ export class CodeBuddyCatalog {
     this.failures.delete(region)
   }
 
+  /**
+   * Models from the region's warm control session, booting it when needed.
+   *
+   * A failure discards the session: the CLI may have exited on its own, and a
+   * process that cannot answer one control request must not answer the next.
+   * The retry is simply the next read, which starts a fresh one.
+   */
   private async fetch(region: CodeBuddyRegion): Promise<readonly CodeBuddyModel[]> {
     const timeout = readLive(this.timeoutMs, CODEBUDDY_FETCH_TIMEOUT_MS)
-    return await withSession(region, async session => {
-      const raw = await session.getAvailableModelsRaw()
+    const session = await this.controlSession(region, timeout)
+    try {
+      const raw = await withTimeout(session.getAvailableModelsRaw(), timeout, 'CodeBuddy request')
       return raw.map(toCodeBuddyModel)
-    }, timeout)
+    } catch (error) {
+      this.discardControl(region)
+      throw error
+    } finally {
+      this.armControl(region)
+    }
+  }
+
+  /** The region's control session, booted on first use. */
+  private async controlSession(region: CodeBuddyRegion, timeoutMs: number): Promise<SessionImpl> {
+    const existing = this.controls.get(region)
+    if (existing !== undefined) return existing.session
+    const session = await openControlSession(region, timeoutMs)
+    this.controls.set(region, { session, timer: undefined })
+    return session
+  }
+
+  /** Release the process once the region has gone a whole idle window unused. */
+  private armControl(region: CodeBuddyRegion): void {
+    const entry = this.controls.get(region)
+    if (entry === undefined) return
+    if (entry.timer !== undefined) clearTimeout(entry.timer)
+    const idle = readLive(this.controlIdleMs, CONTROL_IDLE_MS)
+    if (!(idle > 0)) {
+      entry.timer = undefined
+      return
+    }
+    const timer = setTimeout(() => { this.discardControl(region) }, idle)
+    unrefTimer(timer)
+    entry.timer = timer
+  }
+
+  /**
+   * Drop the warm control session(s), so the next read boots a new process.
+   *
+   * Login, logout and a region switch all change what that process would
+   * answer — it was started with one account's credential and one region's
+   * directory — so callers must discard rather than reuse. Idle release and a
+   * failed read arrive here too.
+   */
+  discardControl(region?: CodeBuddyRegion): void {
+    for (const each of region === undefined ? [...this.controls.keys()] : [region]) {
+      const entry = this.controls.get(each)
+      if (entry === undefined) continue
+      this.controls.delete(each)
+      if (entry.timer !== undefined) clearTimeout(entry.timer)
+      entry.session.close()
+    }
+  }
+
+  /** Release every warm control session (plugin teardown). */
+  close(): void {
+    this.discardControl()
   }
 }
 
@@ -474,6 +559,31 @@ export class CodeBuddyAccountReader {
 
   private async fetch(region: CodeBuddyRegion): Promise<CodeBuddyUsageSnapshot> {
     const at = Date.now()
+    const saved = codeBuddyState.region(region)
+    const token = tokenFor(region)
+    // Fast path: a remembered identity plus a credential is everything the
+    // quota endpoint needs, and that endpoint is a plain HTTP call. Booting the
+    // CLI for it was the largest cost of opening the settings page — a fresh
+    // 24 MB process whose only contribution was an identity this store already
+    // holds. The CLI keeps its recovery role below: a rejected credential, or a
+    // region whose identity was never read, still asks it.
+    if (saved?.account !== undefined && token !== undefined) {
+      try {
+        const quota = await fetchCodeBuddyQuota(region, token)
+        codeBuddyState.patch(region, { signedIn: true, quota, quotaError: undefined, at })
+        return { at, account: saved.account, quota }
+      } catch (error) {
+        if (!isCredentialRejected(error)) {
+          // A 5xx, an unreachable endpoint or an unparseable body says nothing
+          // about the login: the identity stays, only the quota is unknown.
+          const message = error instanceof Error ? error.message : String(error)
+          codeBuddyState.patch(region, { signedIn: true, quota: undefined, quotaError: message, at })
+          return { at, account: saved.account, quotaError: message }
+        }
+        // Rejected: drop it and let the CLI try to recover a usable one below.
+        forgetToken(region)
+      }
+    }
     // Ask the CLI even when this region holds no credential of ours.
     //
     // Refusing here used to be the guard against adopting the *other* region's
@@ -779,6 +889,17 @@ async function readQuotaWithToken(region: CodeBuddyRegion): Promise<CodeBuddyQuo
 
 interface AuthRun {
   status: CodeBuddyAuthStatus
+  /**
+   * Whether this region held a credential before the click.
+   *
+   * The SDK's `authenticate` reuses any token the CLI still has on disk and
+   * never calls `onAuthUrl`, so a click on a signed-in region has to clear
+   * first. A region that never signed in has nothing to clear, and skipping
+   * that call saves a whole CLI boot — the bundled CLI has no daemon, so each
+   * `unstable_v2_*` call is a fresh 24 MB process, and this one was the larger
+   * half of the wait between the click and the browser tab.
+   */
+  clearFirst: boolean
 }
 
 /**
@@ -798,11 +919,18 @@ export class CodeBuddyAuth {
   ): { started: true } | { started: false, error: string } {
     const existing = this.runs.get(region)
     if (existing?.status.running === true) return { started: false, error: '该区域正在登录，请先在浏览器中完成。' }
+    // Read before clearing: the decision is whether this region *had* a
+    // credential, and the clear below erases that evidence.
+    const saved = codeBuddyState.region(region)
+    const clearFirst = saved?.token !== undefined
+      || saved?.user !== undefined
+      || saved?.account !== undefined
+      || saved?.signedIn === true
     // A login click always starts a browser flow. The SDK would otherwise
     // silently reuse any token the CLI still has on disk.
     bearerTokens.delete(region)
     codeBuddyState.clear(region)
-    const run: AuthRun = { status: { running: true, region, startedAt: Date.now(), signedIn: false } }
+    const run: AuthRun = { status: { running: true, region, startedAt: Date.now(), signedIn: false }, clearFirst }
     this.runs.set(region, run)
     void this.login(run, onFinish)
     return { started: true }
@@ -854,17 +982,21 @@ export class CodeBuddyAuth {
       // `authenticate()` short-circuits when the CLI still has a token on disk:
       // it returns that token without ever calling `onAuthUrl`, so the click
       // looks dead and an expired credential survives forever. A login click
-      // always means "open the browser", so drop the stored credential first.
+      // always means "open the browser", so drop the stored credential first —
+      // but only when this region held one: booting the CLI just to clear
+      // nothing is the cost this skip exists for.
       // Both calls are scoped to this region's directory: the CLI's default
       // directory is shared, so an unscoped logout here signed the *other*
       // region out as a side effect of logging this one in.
-      await withTimeout(
-        sdk.unstable_v2_logout({ environment: codeBuddyEnvironment(region), env: cliDirEnv(region) }),
-        LOGOUT_TIMEOUT_MS,
-        'CodeBuddy logout',
-      ).catch(() => undefined)
-      if (!this.current(run)) return
-      bearerTokens.delete(region)
+      if (run.clearFirst) {
+        await withTimeout(
+          sdk.unstable_v2_logout({ environment: codeBuddyEnvironment(region), env: cliDirEnv(region) }),
+          LOGOUT_TIMEOUT_MS,
+          'CodeBuddy logout',
+        ).catch(() => undefined)
+        if (!this.current(run)) return
+        bearerTokens.delete(region)
+      }
       const result = await sdk.unstable_v2_authenticate({
         environment: codeBuddyEnvironment(region),
         env: cliDirEnv(region),

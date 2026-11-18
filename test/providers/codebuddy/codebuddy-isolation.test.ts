@@ -26,6 +26,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const fake = vi.hoisted(() => ({
   authCalls: [] as Record<string, unknown>[],
   authFails: false,
+  queryCalls: 0,
   account: { uid: 'u-1', userName: 'dev', userNickname: 'dev', token: 'embedded-token' } as Record<string, unknown>,
 }))
 
@@ -43,7 +44,7 @@ vi.mock('../../../src/host/infra/sdk.ts', () => ({
     },
     query: () => ({
       connect: async () => {},
-      accountInfo: async () => ({ ...fake.account }),
+      accountInfo: async () => { fake.queryCalls += 1; return { ...fake.account } },
       return: async () => {},
     }),
     unstable_v2_createSession: () => ({ connect: async () => {}, close: () => {} }),
@@ -63,6 +64,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
   fake.authCalls.length = 0
   fake.authFails = false
+  fake.queryCalls = 0
   fake.account = { uid: 'u-1', userName: 'dev', userNickname: 'dev', token: 'embedded-token' }
 })
 
@@ -72,6 +74,9 @@ describe('region scope on the auth calls', () => {
   beforeEach(() => { codeBuddyState.clear('cn'); codeBuddyState.clear('global') })
 
   it('logs in and out inside one region directory, and not the other', async () => {
+    // Signed in already, so the click takes the full path: clear the stored
+    // credential, then open the browser.
+    codeBuddyState.patch('cn', { token: 'stored-1', signedIn: true })
     const auth = new CodeBuddyAuth()
     await new Promise<void>(resolve => { void auth.start('cn', () => resolve()) })
     await auth.logout('cn')
@@ -152,6 +157,64 @@ describe('quota failure only ends a login when the credential was rejected', () 
     expect(snapshot.error).toBeUndefined()
     expect(snapshot.account?.userName).toBe('still-in')
     expect(codeBuddyState.region('cn')?.signedIn).toBe(true)
+  })
+})
+
+describe('quota reads that need no CLI', () => {
+  const quotaPayload = JSON.stringify({
+    data: {
+      Response: {
+        Data: {
+          Accounts: [{
+            Status: 0,
+            CycleCapacitySizePrecise: 100,
+            CycleCapacityRemainPrecise: 60,
+            CycleEndTime: '2099-01-01 00:00:00',
+          }],
+        },
+      },
+    },
+  })
+
+  beforeEach(() => { codeBuddyState.clear('cn'); codeBuddyState.clear('global') })
+
+  it('answers over HTTP once the identity is remembered', async () => {
+    // Token plus a remembered identity is everything the billing endpoint
+    // needs. The CLI used to be booted for this on every settings visit, and
+    // its only contribution was the identity already on disk.
+    codeBuddyState.patch('cn', {
+      token: 'secret-2', signedIn: true, at: Date.now(), account: { uid: 'u-1', userName: 'dev' },
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(quotaPayload, { status: 200 })))
+
+    const snapshot = await new CodeBuddyAccountReader('cn').read(true)
+    expect(snapshot.account?.userName).toBe('dev')
+    expect(snapshot.quota?.total).toBe(100)
+    expect(fake.queryCalls).toBe(0)
+  })
+
+  it('keeps the identity and reports only the quota when the endpoint fails', async () => {
+    codeBuddyState.patch('cn', {
+      token: 'secret-2', signedIn: true, at: Date.now(), account: { uid: 'u-1', userName: 'dev' },
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('boom', { status: 503 })))
+
+    const snapshot = await new CodeBuddyAccountReader('cn').read(true)
+    expect(snapshot.account?.userName).toBe('dev')
+    expect(snapshot.quotaError).toBeDefined()
+    expect(fake.queryCalls).toBe(0)
+  })
+
+  it('falls back to the CLI when the credential is rejected', async () => {
+    codeBuddyState.patch('cn', {
+      token: 'secret-2', signedIn: true, at: Date.now(), account: { uid: 'u-1', userName: 'dev' },
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('nope', { status: 401 })))
+
+    await new CodeBuddyAccountReader('cn').read(true)
+    // A rejected token is the one case that still deserves a CLI: it may hold
+    // a usable credential this store lost.
+    expect(fake.queryCalls).toBeGreaterThan(0)
   })
 })
 

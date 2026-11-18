@@ -50,6 +50,9 @@ describe('CodeBuddy browser login', () => {
   })
 
   it('clears the cached credential before opening the browser', async () => {
+    // A region that is already signed in must clear first, or `authenticate`
+    // reuses the stored token and never opens the browser.
+    codeBuddyState.patch('cn', { token: 'old-token', signedIn: true })
     const auth = new CodeBuddyAuth()
     await expect(run(auth, 'cn')).resolves.toBe(true)
     expect(fake.calls).toEqual(['logout', 'authenticate'])
@@ -57,6 +60,16 @@ describe('CodeBuddy browser login', () => {
       running: false, region: 'cn', signedIn: true, user: { userId: 'user-1' },
     })
     expect(auth.status('cn').url).toBe(fake.authUrl)
+    expect(codeBuddyState.token('cn')).toBe('token-1')
+  })
+
+  it('does not boot the CLI just to clear a credential the region never had', async () => {
+    // Signed out: there is nothing on disk to clear, and the SDK gives no
+    // daemon, so a `logout` call here is a whole 24 MB process that closes
+    // before the browser flow even starts.
+    const auth = new CodeBuddyAuth()
+    await expect(run(auth, 'cn')).resolves.toBe(true)
+    expect(fake.calls).toEqual(['authenticate'])
     expect(codeBuddyState.token('cn')).toBe('token-1')
   })
 
@@ -74,12 +87,14 @@ describe('CodeBuddy browser login', () => {
     const auth = new CodeBuddyAuth()
     await run(auth, 'global')
     // The bundled CLI opens the browser itself; opening it here as well was
-    // what produced two identical tabs per login click.
-    expect(fake.calls).toEqual(['logout', 'authenticate'])
+    // what produced two identical tabs per login click. Nothing is stored for
+    // this region yet, so the click costs one process, not two.
+    expect(fake.calls).toEqual(['authenticate'])
     expect(auth.status('global').url).toBe(fake.authUrl)
   })
 
   it('still authenticates when clearing the old credential fails', async () => {
+    codeBuddyState.patch('cn', { token: 'stale-token', signedIn: true })
     fake.failLogout = true
     const auth = new CodeBuddyAuth()
     await expect(run(auth, 'cn')).resolves.toBe(true)

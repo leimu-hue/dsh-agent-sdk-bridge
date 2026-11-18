@@ -16,6 +16,7 @@ import { afterAll, describe, expect, it, vi } from 'vitest'
 
 const fake = vi.hoisted(() => ({
   calls: [] as { environment: string, env?: Record<string, string> }[],
+  failReads: false,
 }))
 
 // The CLI directory override is read per session, so it is enough to set it
@@ -31,7 +32,10 @@ vi.mock('../../../src/host/infra/sdk.ts', () => ({
       fake.calls.push({ environment: options.environment, env: options.env })
       return {
         connect: async () => {},
-        getAvailableModelsRaw: async () => [{ id: `${options.environment}-model`, name: 'Model' }],
+        getAvailableModelsRaw: async () => {
+          if (fake.failReads) throw new Error('CLI is gone')
+          return [{ id: `${options.environment}-model`, name: 'Model' }]
+        },
         close: () => {},
       }
     },
@@ -66,5 +70,39 @@ describe('CodeBuddy catalog isolation per region', () => {
     await catalog.models('cn')
     await catalog.models('cn')
     expect(fake.calls).toHaveLength(1)
+  })
+
+  it('answers a cache-expired read from the warm control session', async () => {
+    // A zero TTL forces a fresh CLI read every time; the process behind it must
+    // still be booted once. This is the whole point of keeping it warm: a
+    // settings visit used to pay a 24 MB boot per read.
+    fake.calls.length = 0
+    const catalog = new CodeBuddyCatalog(() => 'cn', () => 0)
+    await catalog.models('cn')
+    await catalog.models('cn')
+    expect(fake.calls).toHaveLength(1)
+  })
+
+  it('boots a new control session after the warm one is discarded', async () => {
+    // Login, logout and a region switch all change what the process would
+    // answer, so they discard it; the next read starts a fresh one.
+    fake.calls.length = 0
+    const catalog = new CodeBuddyCatalog(() => 'cn', () => 0)
+    await catalog.models('cn')
+    catalog.discardControl('cn')
+    await catalog.models('cn')
+    expect(fake.calls).toHaveLength(2)
+  })
+
+  it('does not reuse a control session whose read failed', async () => {
+    fake.calls.length = 0
+    const catalog = new CodeBuddyCatalog(() => 'cn', () => 0)
+    fake.failReads = true
+    await expect(catalog.models('cn')).resolves.toEqual([])
+    // The failed process is gone, so the next read can only answer by booting
+    // another one — a wedged CLI must not poison every later catalog read.
+    fake.failReads = false
+    await expect(catalog.models('cn')).resolves.toMatchObject([{ id: 'internal-model' }])
+    expect(fake.calls).toHaveLength(2)
   })
 })

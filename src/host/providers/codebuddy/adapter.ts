@@ -159,6 +159,9 @@ export class CodeBuddyAdapter extends LlmAdapter {
     return this.auth.start(region, ok => {
       if (!ok) return
       this.sessions.closeAll()
+      // The warm catalog session was booted with the previous account's
+      // credential, so it has to go with the conversations.
+      this.catalog.discardControl(region)
       this.invalidateCatalog(region)
       this.invalidateUsage(region)
     })
@@ -167,6 +170,7 @@ export class CodeBuddyAdapter extends LlmAdapter {
   async logout(region: CodeBuddyRegion): ReturnType<CodeBuddyAuth['logout']> {
     const result = await this.auth.logout(region)
     this.sessions.closeAll()
+    this.catalog.discardControl(region)
     this.invalidateCatalog(region)
     this.invalidateUsage(region)
     return result
@@ -396,5 +400,6 @@ export class CodeBuddyAdapter extends LlmAdapter {
 
   close(): void {
     this.sessions.closeAll()
+    this.catalog.close()
   }
 }
