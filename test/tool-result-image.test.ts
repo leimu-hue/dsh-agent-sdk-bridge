@@ -10,13 +10,14 @@
  */
 import { describe, expect, it } from 'vitest'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { CodeBuddyAdapter } from '../src/codebuddy-adapter.ts'
-import { renderCodeBuddyResult } from '../src/codebuddy.ts'
-import { MinimaxAdapter } from '../src/minimax-adapter.ts'
-import { renderToolResult } from '../src/minimax.ts'
+import { AttachmentId } from '@deepseek-ai/dsh-attachment'
+import { CodeBuddyAdapter } from '../src/providers/codebuddy/adapter.ts'
+import { renderCodeBuddyResult } from '../src/providers/codebuddy/session.ts'
+import { MinimaxAdapter } from '../src/providers/minimax/adapter.ts'
+import { renderToolResult } from '../src/providers/minimax/session.ts'
 
 const REF: ImageAttachmentRef = {
-  attachmentId: 'sha256:2b081468d33313d546912d12c2f5c6f2b352547ff871f3c939fc357dd096194a',
+  attachmentId: AttachmentId('sha256:2b081468d33313d546912d12c2f5c6f2b352547ff871f3c939fc357dd096194a'),
   mediaType: 'image/png',
   bytes: 3,
   width: 2,

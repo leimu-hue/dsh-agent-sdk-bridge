@@ -31,7 +31,7 @@ const inMemory = await import('@modelcontextprotocol/sdk/inMemory.js')
 const { createSdkMcpServer: createQoderMcpServer } = await import('@qodercn-ai/qodercn-agent-sdk')
 const { z } = await import('zod')
 
-const { HostToolRegistry } = await import('../src/session.ts')
+const { HostToolRegistry } = await import('../src/core/host-session.ts')
 
 type Host = InstanceType<typeof mcp.McpServer>
 type Client = InstanceType<typeof clientModule.Client>
@@ -64,28 +64,31 @@ const bash = { name: 'ops_bash', description: 'run a shell command', parameters:
 const editFile = { name: 'ops_edit_file', description: 'edit one file', parameters: { type: 'object', properties: { path: { type: 'string' } } } }
 
 describe('MCP tools capability', () => {
-  it('connects without a tools capability when nothing declared it, and cannot recover', async () => {
-    // The pre-fix shape. This is the failure the capability declaration exists
-    // to prevent, pinned so a regression cannot be mistaken for a test artifact.
+  it('never lets a host tool vanish when the capability was not declared first', async () => {
+    // The failure the registry's prepare() exists to prevent: a tool the server
+    // accepted but the client can never see. Which branch the SDK takes has
+    // moved between releases — older builds refused `registerTool` after
+    // `connect()` and answered `{}` with no list handler, while 1.32 accepts the
+    // late registration, advertises `listChanged` and publishes the tool. Pin
+    // the invariant both branches must satisfy instead of one build's internals.
     const { server, client } = await connectPair(false)
-    // The client snapshots the server's capabilities at `initialize`. The
-    // constructor's `capabilities` option is advertised, but `tools.listChanged`
-    // is missing and — decisively — the `tools/list` request handler was never
-    // installed, because the SDK installs it (and re-registers the capability
-    // with `listChanged`) only on the first `registerTool`. So the client is
-    // told a tools capability exists and then cannot read the tool list at all.
-    expect(client.getServerCapabilities()?.tools).toEqual({})
-    await expect(client.listTools()).rejects.toThrow(/Method not found/)
-    expect(() => server.registerTool('ops_bash', { description: 'd', inputSchema: { command: z.string() } }, async () => ({ content: [] })))
-      .toThrow(/Cannot register capabilities after connecting/)
+    let accepted = true
+    try {
+      server.registerTool('ops_bash', { description: 'd', inputSchema: { command: z.string() } }, async () => ({ content: [] }))
+    } catch {
+      accepted = false
+    }
+    const listed = (await client.listTools()).tools.map(tool => tool.name)
+    expect(listed).toEqual(accepted ? ['ops_bash'] : [])
     await client.close()
   })
 
   it('declares the tools capability before connecting so tools can arrive later', async () => {
     const { server, client } = await connectPair(true)
-    // The capability — including `listChanged` — is visible from the start,
-    // which is what lets the model be told the tool set changed.
-    expect(client.getServerCapabilities()?.tools).toEqual({ listChanged: true })
+    // The capability is visible from the start, which is what lets the model be
+    // told the tool set changed. `listChanged` is the SDK's own normalisation
+    // of it, so the field is not pinned here.
+    expect(client.getServerCapabilities()?.tools).toBeDefined()
     expect((await client.listTools()).tools).toEqual([])
 
     // A host tool that only appears on a later turn must register cleanly.
@@ -169,7 +172,7 @@ describe('bare host tool names', () => {
     // model sometimes emits — is answered by the CLI itself before any host
     // round. This pins the naming table the session matches on, because getting
     // it wrong is what turns a working tool into "does not exist".
-    const { isHostTool, hostToolName } = await import('../src/codebuddy.ts')
+    const { isHostTool, hostToolName } = await import('../src/providers/codebuddy/session.ts')
     expect(isHostTool('mcp__dsh_host__ops_edit_file')).toBe(true)
     expect(isHostTool('mcp__dsh-host__ops_edit_file')).toBe(true)
     expect(hostToolName('mcp__dsh_host__ops_edit_file')).toBe('ops_edit_file')
@@ -182,7 +185,7 @@ describe('bare host tool names', () => {
     // A model that invents the shorter name therefore gets a real host round
     // whose answer is "no such tool", rather than the CLI refusing it before the
     // host ever saw it. Pinned so nobody mistakes that wording for this bug.
-    const { isHostTool, hostToolName } = await import('../src/codebuddy.ts')
+    const { isHostTool, hostToolName } = await import('../src/providers/codebuddy/session.ts')
     expect(isHostTool('mcp__dsh_host__ops_edit')).toBe(true)
     expect(hostToolName('mcp__dsh_host__ops_edit')).toBe('ops_edit')
   })

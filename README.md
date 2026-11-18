@@ -79,7 +79,7 @@ npm install -g @qoder-ai/qodercli       && qodercli login    # 国际版
 `qoderclicn status` / `qodercli status` 能列出 `Username` 即登录成功。Qoder 的一键配置只支持 Windows。
 
 > `QODERCLI_PATH` 若指向另一版本的 CLI，对应版本会明确报错，而不是借用那个账号回答。国际版
-> 专用覆盖变量是 `QODER_CLI_PATH`。更多见 [常见问题](./FAQ.md)。
+> 专用覆盖变量是 `QODER_CLI_PATH`。
 
 ## 设置页
 
@@ -145,7 +145,6 @@ npm install -g @qoder-ai/qodercli       && qodercli login    # 国际版
 
 ## 更多
 
-- 问题排查与历史修复记录：[常见问题](./FAQ.md)
 - 实现要点、开发须知与构建说明：[开发文档](./DEVELOPMENT.md)
 
 ## 免责声明

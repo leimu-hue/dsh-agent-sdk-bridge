@@ -2,9 +2,66 @@
 
 实现要点与改这个仓库前必须知道的 DSH 行为。返回 [README](./README.md)。
 
+## 目录分层
+
+`src/` 按依赖方向分四层，箭头只能朝下：
+
+```
+src/
+  index.ts        组合根：把各层装进 cordis 插件，外部 API 也从这里 re-export
+  surface/        与 DSH 的接口：HTTP 路由与设置页数据（api.ts）
+  providers/      每家订阅一套：{qoder,codebuddy,minimax}/adapter.ts（LLM 适配）
+                  + session.ts（会话与 CLI 协议）
+  infra/          与这台机器打交道：cli/（5 层查找）、sdk、setup、*-state、minimax-cli
+  core/           不碰磁盘、不启子进程、不加载 SDK 的纯领域件：brand、config、catalog、
+                  render、tokens、jsonschema、live、model-cache、mcp-naming、
+                  adapter-kit（ImageRequestReader / reasoningInfo / planContinuation）、
+                  host-session（MCP_SERVER_NAME / HostToolRegistry / TurnQueue / ToolResultPairing）
+```
+
+`test/` 镜像同一结构，`test/helpers/` 放 fixture，跨 provider 的用例留在 `test/` 根。
+
+**provider 之间不得互相 import**：三家共用的两套东西已经整体提到 `core/`——
+`core/adapter-kit.ts`（适配层原语：读图、思考档位、续轮计划）与 `core/host-session.ts`
+（会话层原语：MCP server 名、工具注册表、队列、工具结果配对）。它们只依赖 `dsh-llm`、
+`dsh-attachment` 与同层的 `render` / `jsonschema`，不认任何一家 CLI；新增第四家 provider
+时直接从 `core/` 取，不要在自家目录里再抄一份（`hostToolName` 这类只是换个前缀的薄函数
+各家自带即可）。
+
+## 依赖与兼容（官方插件规范）
+
+- **共享实例必须同时写在 peer 与 dev**。`@deepseek-ai/cordis`、`cosmokit`、`dsh-llm`、
+  `dsh-attachment`、`schemastery` 都是宿主提供的单例：peer 让运行时用宿主的副本，dev 让
+  `tsc` 与单测有一份。缺了 dev 那一半，包管理器会自由解析——npm 曾把 `cosmokit` 顶成 1.9.0，
+  而 cordis / schemastery 各自嵌了 1.8.6，于是 `z.object()` 的推断类型横跨两套具名类型，
+  `tsc` 报 `TS2742 … cannot be named without a reference to
+  @deepseek-ai/cordis/node_modules/@deepseek-ai/cosmokit`。**`cosmokit` 必须与 cordis 那一份同版本**
+  （devDep `~1.8.5`、peer `>=1.8.5 <2`；pnpm 的 `autoInstallPeers` 本来就会这样解，npm 不会）。
+  注：`~1.8.5` 对齐的是 cordis 4.0.x 那条线；宿主升到 cordis 4.1.0 后要同步成 `~1.9.0`。
+- **用 `engines.dsh` 声明支持的 DSH 版本，并按 tuple 枚举**。官方规则：安装与 profile 启动先查
+  `engines.dsh`，没有它才退回去查 `@deepseek-ai/dsh*` 的 peer 范围。写法是
+  `^0.1.7-rc.1 || ^0.2.0-rc.1 || ^0.2.1-rc.1 || ^0.2.2-rc.1`：semver 的预发布规则规定，带预发布的
+  版本只匹配「同一 major.minor.patch 且含预发布」的 comparator，所以 `^0.2.0-rc.1` **不匹配**
+  桌面版在用的 `0.2.2-rc.3`；而 `>=0.1.7-0 <0.3.0` 这种「带 `-0` 就通吃」的写法，在**不开**
+  `includePrerelease` 的标准实现下同样是 false，等于把用户挡在门外。跨 patch 行只能按 tuple
+  枚举，官方 harness 各包也是整组包走同一条 rc 线；新增 0.2.3 时要补一条 tuple。
+- **0.2.x 内部也会断，换宿主版本要重编一次**。桌面版 0.2.2-rc.3 的依赖栈是 cordis 4.1.0 /
+  cosmokit ~1.9.0 / schemastery ~3.19.0，与 0.2.0-rc.2 的 cordis 4.0.x / cosmokit 1.8.x 不同；
+  `LlmError` 的 code 参数也从 `string` 收窄成 `BuiltinLlmFailureCode` 联合（自造的 `CONFLICT`
+  被移除），本仓库因此改用两代签名下都合法的 `INVALID_REQUEST`。所以升线后要**对宿主那一套**
+  重跑一次 `tsc`，而不是只对 devDep：把宿主版本装到临时前缀，用一份 `paths` 覆盖的 tsconfig
+  指向它再 `tsc -p`，就能在不动 lock 的前提下验证真实 API。
+- **MCP 的契约按行为钉，不按形状钉**。`@modelcontextprotocol/sdk` 是 Qoder SDK 的浮动传递依赖
+  （本机 1.32.2）：1.32 起 `McpServer` 在构造时就安装 `tools/list` 并补上 `listChanged`，
+  连接后 `registerTool()` 也不再抛错。`test/tool-registry.test.ts` 因此断言「被接受的工具一定
+  可见」，而不是能力对象的字段——否则 SDK 一升版就红。
+- **`lib/` 是入库产物**，所以 `dsh plugin add github:k1-h2/dsh-agent-sdk-bridge` 不需要额外的
+  `prepare` 脚本也能加载（官方给 git 安装的推荐做法是加 `prepare`；这里用「提交构建产物」这条
+  替代路径）。改源码后记得重新 `npm run build`。
+
 ## 实现要点
 
-- **多 SDK**：品牌差异集中在 `src/brand.ts`（SDK 包、CLI 包、登录态目录、一键配置脚本、
+- **多 SDK**：品牌差异集中在 `src/core/brand.ts`（SDK 包、CLI 包、登录态目录、一键配置脚本、
   登录区域），其余代码按 brand 参数化。CN Qoder SDK 静态引入；另两个 SDK 按需 `import()`，
   没装时只有对应页面报错，插件照常加载。
 - **品牌隔离**：各 provider 的 CLI 查找、模型目录缓存、会话池、账户读取、模型开关全部按 brand
@@ -20,7 +77,8 @@
   是 `sdk_worker_removed: … Upgrade to the latest Qoder SDK version, or roll back the CLI`。
   因此：`dependencies` 里的两个 Qoder SDK 锁在同一个大版本（1.0.58 ↔ CLI 1.1.81）；
   两个 `setup-*.bat` 从 SDK 清单读出 `qoderCliVersion` 并安装**那个精确版本**（不是 latest）；
-  `requiredCliVersion()` / `installedCliVersion()` 都从磁盘读（后者读 npm 包的 manifest，不 spawn），
+  `requiredCliVersion()` / `installedCliVersion()` 都从磁盘读（后者先读 npm 包的 manifest，原生构建再读
+  安装器写的 `version.txt`，都不 spawn），
   `/setup` 据此回传 `requiredCliVersion` / `cliVersion` / `versionMismatch`，页面在登录前就红字提示；
   `cliFailureText()` 把 code 42 翻译成「点一键配置装配套版本」，并把原始信息附在后面。
   另注：`sdkDir()` 要剥掉 `dist` 这一层——`resolve()` 返回的是包内入口，直接 `dirname` 得到的是
@@ -29,10 +87,17 @@
   空数组（CLI 的 `--list-models` 同账号却能打出 11 条）。先在同一个 session 里取账号、再带 `uid`
   查目录才稳定；空答案时再依次回落 `fetchStrategy: 'cache'` → `'live'`。否则设置页显示 0/0，
   看起来像「没装 CLI」，实际只是读序不对。
-- **CLI 查找要认包清单**：`bundle/<name>.js` 是常见布局，不是唯一布局。`packageEntries()` 还会
-  读包自己的 `package.json`（`main`/`bin`），并把 Windows 的 `<node>/node_modules` 与 unix 的
-  `<prefix>/lib/node_modules` 都当作全局根。只猜 `bundle/` 会把已安装的 CLI 判成未安装，
-  页面就一直要你「再装一次」。
+- **CLI 查找已分层**：`src/infra/cli.ts` 只是门面，实现在 `src/infra/cli/` 下的五层——`machine.ts` 读这台
+  机器（env / `PATH` / Node / SDK 目录，收成一个 `Probe`）、`layout.ts` 列出某版本值得探测的路径、
+  `lookup.ts` 在这些候选里定出唯一可 spawn 的答案、`version.ts` 比对 SDK 钉住的版本、`messages.ts`
+  只负责文案。分层的目的是：上面几层不认识 `node:fs`，因此测试可以「描述一台机器」而不是必须在
+  那种机器上跑（fixture 在 `test/helpers/cli-machine.ts`）。
+- **CLI 查找要认全部真实布局**：npm 全局包（除 `bundle/<name>.js` 外还读包自己 `package.json` 的
+  `main`/`bin`）、SDK 自带的 `dist/_bundled`、安装器写的 `~/.qoder/bin/qodercli/qodercli.exe`
+  （CN 为 `~/.qoder-cn/bin/qoderclicn/`，旧版 `~/.qoder/local/` 仍保留），最后才是 `PATH` 上能
+  解析到的同名可执行文件。全局根也不只取「正在跑的那个 Node」的同级目录：还会从 `PATH` 上每个
+  `node(.exe)` 反推前缀（nvm4w 的 `C:\nvm4w\nodejs` 就是这样漏掉的）。只认一种布局，就会把已安装的
+  CLI 判成未安装，页面一直要你「再装一次」。
 - **退出登录要清凭据并关会话**：Qoder CLI 没有 `logout` 子命令，登录态只保存在加密的
   `~/.qoder-cn/.auth/user`（国际版 `~/.qoder/.auth/user`）；`machine_id` 属于机器而不是账号，保留。
   两个 `setup-*.bat` 的 `--logout` 删除该文件后再跑一次 `status`，确认不再打印 `Username`。
@@ -60,14 +125,14 @@
   `resolveDeclaredWindow()` 只在模型确实声明了该档位时才采用用户覆盖（`auto` 只声明
   `[200000]`，存了 1M 也会被忽略），`/models` 对单档模型回传
   `contextWindowSelectable: false`，页面显示「上游固定」。
-- **CodeBuddy**：`src/codebuddy.ts` 自成一体会话（`unstable_v2_createSession` + 流式消息），
+- **CodeBuddy**：`src/providers/codebuddy/session.ts` 自成一体会话（`unstable_v2_createSession` + 流式消息），
   模型目录取自 `getAvailableModelsRaw()`，账户取自一次性 `query().accountInfo()`；登录走
   `unstable_v2_authenticate`，`global`/`cn` 分别映射为 SDK 的 `external`/`internal`。
   企业 `ioa`/`cloudhosted`/`selfhosted` 环境不暴露。SDK 自带 CLI，因此没有安装脚本。
   登录点击会先 `unstable_v2_logout` 清掉该区域缓存的 token：SDK 的 `authenticate()` 发现
   旧 token 时会静默返回、不回调 `onAuthUrl`，导致「切区域后点登录不弹浏览器」；清掉后
   必定走完整浏览器授权。登录成功会关闭该区域所有热会话，避免继续复用旧凭据。
-  登录结果按区域写入 `~/.dsh/agent-sdk-bridge/codebuddy-state.json`（`src/codebuddy-state.ts`，
+  登录结果按区域写入 `~/.dsh/agent-sdk-bridge/codebuddy-state.json`（`src/infra/codebuddy-state.ts`，
   含账号、额度快照与 bearer token，权限 0600）。之后创建会话、读账号都用
   `CODEBUDDY_AUTH_TOKEN` 环境变量把该区域的 token 注入 CLI，因此切区域和重启后恢复登录都
   不需要再走浏览器；登出或配额 401 会清掉该区域的 token。无效 token 会让 CLI 以
@@ -111,7 +176,7 @@
   吞掉正是它的来源，所以现在失败了会 `console.warn` 打出来，绝不静默。
   Qoder 路径同样适用（`session.ts` 共用 `HostToolRegistry`）。
 - **切换模型读缓存**：`resolveModel` 与 `capture()` 走 `cachedModels()`
-  （`src/model-cache.ts`）：有快照就先返回快照，刷新在后台跑；只有从未读到过目录时才等待。
+  （`src/core/model-cache.ts`）：有快照就先返回快照，刷新在后台跑；只有从未读到过目录时才等待。
   三家的目录获取都很贵（Qoder 冷启动 CLI，最长等于 fetch 超时；CodeBuddy 要启进程；MiniMax
   走 ACP 探测），而宿主在每次切模型、切思考档位时都会重新解析一次，所以以前 TTL 一过期就会
   卡住菜单。三家 catalog 都新增了 `snapshot()`（只读内存，不发网络）供这里使用。
@@ -172,7 +237,7 @@
   额度读取优先用保存的 token，缺失时才静默 `authenticate`，不会拉起浏览器。卡片里的积分包
   与 Trae 适配器同一规则：`packageSummary()` 算出包数、合计额度与最近到期（跳过 year-9999
   哨兵），默认只渲染这一行；展开后逐个包列在 190px 高的滚动区里，不再截断到前四个。
-- **MiniMax Code（ACP）**：`src/minimax.ts` 直接启动 `mcode acp` 并用
+- **MiniMax Code（ACP）**：`src/providers/minimax/session.ts` 直接启动 `mcode acp` 并用
   `@agentclientprotocol/sdk` 的 `ClientSideConnection` 说话；`session/new` 的
   `configOptions` 提供模型与思考档位，`session/prompt` 的 `session/update` 通知被翻译成
   DSH 的 block/delta。宿主工具通过 `mcpServers` 注入一个本地 HTTP MCP endpoint
@@ -191,7 +256,7 @@
   `session/cancel`，`MinimaxSession` 随后用 `NATIVE_TOOL_CORRECTION` 让模型改用宿主工具重试
   （最多 2 次，用尽则本轮报错）。取消后的下一次 `session/prompt` 可能短暂返回
   “Session already has an active Turn”，`launchPrompt()` 按 200/400/800/1600ms 退避重试。
-- **MiniMax 的 CLI 安装**：`src/minimax-cli.ts` 只固定执行 npm 的安装 / 卸载 argv，模式走
+- **MiniMax 的 CLI 安装**：`src/infra/minimax-cli.ts` 只固定执行 npm 的安装 / 卸载 argv，模式走
   白名单，不接受任何页面输入；安装参数必须包含 `--allow-scripts=@minimax-ai/code,better-sqlite3`
   与 `--ignore-scripts=false`，否则 npm 12 会跳过 better-sqlite3 的原生构建。
   `MCODE_CLI_PATH` 可指向 `cli.js` 或可执行文件；Windows 上优先解析 npm `.cmd` shim 背后的
@@ -243,11 +308,11 @@
   `renderSideChannelFeed()` 组 prompt（角色=执行末条指令，结尾=「请执行最后一条用户消息给出的
   任务」），不能用 `renderInitialFeed()`：后者开头写「你只输出"下一条助手回复"」，结尾又写
   「输出下一条助手回复」，模型于是把上一条回复复述一遍，摘要位置就变成了复述。三家共用这份
-  渲染，判据在 `test/side-channel.test.ts`。
+  渲染，判据在 `test/core/side-channel.test.ts`。
 - **真实计量**：CLI 默认把用量帧里的 token 计数清零，插件在启动子进程时带上它的
   `EXPOSE_TOKEN_USAGE` 开关；总量、缓存命中与 tok/s 因此都是 provider 实测值，只有拿不到计量时才
-  按「context 比率 → 字符估算」兜底。占用样本只取自**每次请求结束**的那一帧（`requestUsageSample()`，
-  见 [常见问题](./FAQ.md)），内层整轮的合计值不参与上下文计算。
+  按「context 比率 → 字符估算」兜底。占用样本只取自**每次请求结束**的那一帧（`requestUsageSample()`），
+  内层整轮的合计值不参与上下文计算。
 - **溢出可恢复**：内层上下文超限按 `CONTEXT_WINDOW_EXCEEDED` 上报，交给 harness 自动压缩，
   而不是让整轮报废。
 
@@ -272,16 +337,16 @@ if (!pending.length && !force) return          // 不重启，不重新 apply
 
 在 `apply()`（或构造函数）里把配置抄进自己的字段，就等于**永久冻结**。本插件的做法：
 
-- [`src/live.ts`](./src/live.ts)：`Live<T>`（值或 thunk）+ `readLive()`，选项既接受普通值，也
+- [`src/core/live.ts`](./src/core/live.ts)：`Live<T>`（值或 thunk）+ `readLive()`，选项既接受普通值，也
   接受读取实时单元格的 thunk。
-- [`src/config.ts`](./src/config.ts) 的 `liveConfig()`：每个字段返回 thunk，每次读取才从
+- [`src/core/config.ts`](./src/core/config.ts) 的 `liveConfig()`：每个字段返回 thunk，每次读取才从
   `Volatile` 取值；`resolveConfig()` 在它之上实现，两者语义不会漂移。
 - 适配器、会话池、模型目录一律按需读。`updateVolatile()` 只把新值写进**同一个**引用，所以
   thunk 天然看到新值——不用重启，也不丢 warm 会话。
 - 只有两个分组名（`displayName` / `intlDisplayName`）会被复制进选择器的分组目录，无法惰性化；
   插件监听 `loader/volatile-update`，只在这些字段变化时用 `replace()` 就地重发。
 
-[`test/live.test.ts`](./test/live.test.ts) 精确复现 loader 的就地提交并断言适配器**在不重新
+[`test/core/live.test.ts`](./test/core/live.test.ts) 精确复现 loader 的就地提交并断言适配器**在不重新
 `apply()` 的情况下**跟着变；用 0.5.0 的构建跑同一段代码会失败。
 
 **本插件的读写链路。** 读走插件自建路由 `GET /api/llm-qoder-cn/models?brand=cn|global`（模型
@@ -295,7 +360,14 @@ if (!pending.length && !force) return          // 不重启，不重新 apply
 pnpm install          # 首次会下载两个 SDK 的 CLI worker runtime
 pnpm run build:clean   # 清掉 lib/ 再构建；tsc 出 .d.ts，tsdown 出 lib/index.js
 pnpm test              # vitest
+pnpm run typecheck:test # 测试文件的类型检查（跑 tsc -p tsconfig.test.json）
 ```
+
+**`test/` 不在主 `tsconfig.json` 里**：那份配置负责 emit `lib/types`，其 `rootDir` 是 `src`，
+把测试拉进去会污染产物。所以只改源码时 `tsc` 通过并不代表测试也类型正确，IDE 报红而
+`pnpm test` 全绿这种矛盾就是这么来的（曾潜伏 6 处：`brandProfile().setupScript` 可空、
+`AttachmentId` 的 branded string、`typeof fetch` 的隐式 any 等）。改过测试就跑
+`pnpm run typecheck:test`；发布路径的 `prepublishOnly` 已经串上它。
 
 **别用 `pnpm build` 验证改动。** 它的命令是 `tsc && tsdown`：类型一错，`&&` 就短路，`tsdown`
 根本不跑，于是 `lib/index.js` **保持旧内容**——而 `lib/` 才是 DSH 真正加载、npm 真正发布的东西。

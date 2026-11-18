@@ -19,7 +19,7 @@
  * reads each value where it uses it; the only thing captured at mount is the
  * picker-directory registration (`directoryFor`), which is republished through
  * its `replace` handle when the display name changes.
- * See `src/live.ts` for the mechanism.
+ * See `src/core/live.ts` for the mechanism.
  *
  * @module dsh-agent-sdk-bridge
  */
@@ -27,16 +27,16 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { ServerResponse, IncomingMessage } from 'node:http'
 import type { AttachmentStore, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { QoderAdapter, QODER_PROVIDER, QODER_INTL_PROVIDER } from './adapter.ts'
-import { CodeBuddyAdapter, CODEBUDDY_PROVIDER } from './codebuddy-adapter.ts'
-import { MinimaxAdapter, MINIMAX_PROVIDER } from './minimax-adapter.ts'
-import { API_PREFIX, handleApi } from './api.ts'
-import type { BrandId } from './brand.ts'
-import { BRANDS } from './brand.ts'
-import { stopSetup } from './setup.ts'
-import { stopMinimaxSetup } from './minimax-cli.ts'
-import type { LiveConfig, ParsedConfig } from './config.ts'
-import { Config as ConfigSchema, liveConfig } from './config.ts'
+import { QoderAdapter, QODER_PROVIDER, QODER_INTL_PROVIDER } from './providers/qoder/adapter.ts'
+import { CodeBuddyAdapter, CODEBUDDY_PROVIDER } from './providers/codebuddy/adapter.ts'
+import { MinimaxAdapter, MINIMAX_PROVIDER } from './providers/minimax/adapter.ts'
+import { API_PREFIX, handleApi } from './surface/api.ts'
+import type { BrandId } from './core/brand.ts'
+import { BRANDS } from './core/brand.ts'
+import { stopSetup } from './infra/setup.ts'
+import { stopMinimaxSetup } from './infra/minimax-cli.ts'
+import type { LiveConfig, ParsedConfig } from './core/config.ts'
+import { Config as ConfigSchema, liveConfig } from './core/config.ts'
 
 /**
  * The web carrier this plugin mounts its settings API on.
@@ -78,7 +78,7 @@ declare module '@deepseek-ai/cordis' {
      * Emitted by `cordis-plugin-loader` from `Entry._commitVolatile` with the
      * config paths whose cells changed. The plugin does not restart for such an
      * edit, so this is the only notification that one happened; see
-     * `src/live.ts`. Declared here because it is an internal loader event that
+     * `src/core/live.ts`. Declared here because it is an internal loader event that
      * the framework's own `Events` interface does not carry.
      *
      * @param paths - one path array per committed field, e.g. `[['displayName']]`.
@@ -87,10 +87,11 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-export { QoderAdapter, QODER_PROVIDER, QODER_INTL_PROVIDER, cliContextWindow, pickContextWindow } from './adapter.ts'
-export type { ImageRequestReader, QoderAdapterOptions } from './adapter.ts'
-export { CodeBuddyAdapter, CODEBUDDY_PROVIDER, resolveCodeBuddyModelId } from './codebuddy-adapter.ts'
-export { MinimaxAdapter, MINIMAX_PROVIDER, resolveMinimaxModelId } from './minimax-adapter.ts'
+export { QoderAdapter, QODER_PROVIDER, QODER_INTL_PROVIDER, cliContextWindow, pickContextWindow } from './providers/qoder/adapter.ts'
+export type { ImageRequestReader } from './core/adapter-kit.ts'
+export type { QoderAdapterOptions } from './providers/qoder/adapter.ts'
+export { CodeBuddyAdapter, CODEBUDDY_PROVIDER, resolveCodeBuddyModelId } from './providers/codebuddy/adapter.ts'
+export { MinimaxAdapter, MINIMAX_PROVIDER, resolveMinimaxModelId } from './providers/minimax/adapter.ts'
 export {
   MinimaxAcp, MinimaxAuth, MinimaxCatalog, MinimaxSession, MinimaxSessionManager,
   minimaxColdStream, minimaxDataDir, minimaxAuthStatePath, minimaxCliCommand,
@@ -99,47 +100,48 @@ export {
   minimaxRegionBlocked, minimaxRegionBlockedCached, minimaxRegionBlockMessage,
   minimaxHostBelongsToOtherRegion, invalidateMinimaxRegionAccess, MinimaxRegionBlockedError,
   MINIMAX_DEFAULT_CONTEXT_WINDOW, MINIMAX_DEFAULT_MAX_TOKENS, MINIMAX_USAGE_CACHE_TTL_MS,
-} from './minimax.ts'
+} from './providers/minimax/session.ts'
 export type {
   MinimaxAccountInfo, MinimaxAuthStatus, MinimaxCreditInfo, MinimaxMcpToolResult,
   MinimaxModel, MinimaxPlanInfo, MinimaxQuotaWindow, MinimaxUsageSnapshot,
-} from './minimax.ts'
+} from './providers/minimax/session.ts'
 export {
   MinimaxCliSetup, readMinimaxSetupStatus, resolveMinimaxCli, startMinimaxSetup, stopMinimaxSetup,
-} from './minimax-cli.ts'
-export type { MinimaxSetupMode, MinimaxSetupStatus, MinimaxCliSpec } from './minimax-cli.ts'
-export type { CodeBuddyAdapterOptions } from './codebuddy-adapter.ts'
+} from './infra/minimax-cli.ts'
+export type { MinimaxSetupMode, MinimaxSetupStatus, MinimaxCliSpec } from './infra/minimax-cli.ts'
+export type { CodeBuddyAdapterOptions } from './providers/codebuddy/adapter.ts'
 export {
   CodeBuddyAuth, CodeBuddyAccountReader, CodeBuddyCatalog, CodeBuddySession, CodeBuddySessionManager,
   CODEBUDDY_DEFAULT_CONTEXT_WINDOW, CODEBUDDY_DEFAULT_MAX_TOKENS, codeBuddyColdStream,
   fetchCodeBuddyQuota, parseCodeBuddyQuota, toCodeBuddyModel,
-} from './codebuddy.ts'
+} from './providers/codebuddy/session.ts'
 export type {
   CodeBuddyAccount, CodeBuddyAuthStatus, CodeBuddyModel, CodeBuddyQuota, CodeBuddyQuotaPackage,
   CodeBuddyUsageSnapshot,
-} from './codebuddy.ts'
-export { BRANDS, CN_BRAND, GLOBAL_BRAND, CODEBUDDY_BRAND, brandProfile, codeBuddyEnvironment, isBrandId } from './brand.ts'
-export type { BrandId, BrandProfile, CodeBuddyRegion, QoderBrand } from './brand.ts'
-export { loadCodeBuddySdk, loadSdk } from './sdk.ts'
-export { QoderUsage, DEFAULT_USAGE_CACHE_TTL_MS, DEFAULT_USAGE_TIMEOUT_MS } from './usage.ts'
-export type { UsageSnapshot } from './usage.ts'
-export { QoderSession, QoderSessionManager, ToolResultPairing } from './session.ts'
-export type { SessionModelPolicy, SessionRuntimeOptions } from './session.ts'
-export { NARROW_CHARS_PER_TOKEN, WIDE_CHARS_PER_TOKEN, countWideChars, estimateTextTokens, isWideChar } from './tokens.ts'
-export { QODER_MODELS, MODEL_ALIASES, resolveQoderModelId, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_TOKENS } from './catalog.ts'
-export { QoderModelCatalog, priceFactorOf } from './models.ts'
-export { API_PREFIX, buildRows, handleApi } from './api.ts'
-export { SCRIPT_NAME, isSetupMode, readSetupStatus, setupScriptPath, startSetup, stopSetup } from './setup.ts'
-export type { SetupFailure, SetupMode, SetupStatus } from './setup.ts'
-export type { Live } from './live.ts'
-export { readLive, readLiveOptional } from './live.ts'
-export { liveConfig, resolveConfig } from './config.ts'
+} from './providers/codebuddy/session.ts'
+export { BRANDS, CN_BRAND, GLOBAL_BRAND, CODEBUDDY_BRAND, brandProfile, codeBuddyEnvironment, isBrandId } from './core/brand.ts'
+export type { BrandId, BrandProfile, CodeBuddyRegion, QoderBrand } from './core/brand.ts'
+export { loadCodeBuddySdk, loadSdk } from './infra/sdk.ts'
+export { QoderUsage, DEFAULT_USAGE_CACHE_TTL_MS, DEFAULT_USAGE_TIMEOUT_MS } from './providers/qoder/usage.ts'
+export type { UsageSnapshot } from './providers/qoder/usage.ts'
+export { QoderSession, QoderSessionManager } from './providers/qoder/session.ts'
+export type { SessionModelPolicy, SessionRuntimeOptions } from './providers/qoder/session.ts'
+export { ToolResultPairing } from './core/host-session.ts'
+export { NARROW_CHARS_PER_TOKEN, WIDE_CHARS_PER_TOKEN, countWideChars, estimateTextTokens, isWideChar } from './core/tokens.ts'
+export { QODER_MODELS, MODEL_ALIASES, resolveQoderModelId, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_TOKENS } from './core/catalog.ts'
+export { QoderModelCatalog, priceFactorOf } from './providers/qoder/models.ts'
+export { API_PREFIX, buildRows, handleApi } from './surface/api.ts'
+export { SCRIPT_NAME, isSetupMode, readSetupStatus, setupScriptPath, startSetup, stopSetup } from './infra/setup.ts'
+export type { SetupFailure, SetupMode, SetupStatus } from './infra/setup.ts'
+export type { Live } from './core/live.ts'
+export { readLive, readLiveOptional } from './core/live.ts'
+export { liveConfig, resolveConfig } from './core/config.ts'
 // The authoring shape is re-exported as `ConfigShape` because this module also
 // exports the `Config` *schema* value the loader reads; one module cannot
 // re-export a type and declare a value under the same name.
 export type {
   Config as ConfigShape, LiveConfig, ParsedConfig, ResolvedConfig,
-} from './config.ts'
+} from './core/config.ts'
 
 /** Cordis plugin name; must match the `id` used by `cordis.patch.yml`. */
 export const name = 'llm-qoder-cn'

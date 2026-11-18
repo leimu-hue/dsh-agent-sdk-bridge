@@ -14,9 +14,9 @@
  */
 import { describe, expect, it } from 'vitest'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { CodeBuddyAdapter } from '../src/codebuddy-adapter.ts'
-import { QoderAdapter } from '../src/adapter.ts'
-import { feedToText, imageRefText, renderInitialFeed } from '../src/render.ts'
+import { CodeBuddyAdapter } from '../src/providers/codebuddy/adapter.ts'
+import { QoderAdapter } from '../src/providers/qoder/adapter.ts'
+import { feedToText, imageRefText, renderInitialFeed } from '../src/core/render.ts'
 
 const REF: ImageAttachmentRef = {
   attachmentId: 'sha256:2b081468d33313d546912d12c2f5c6f2b352547ff871f3c939fc357dd096194a',

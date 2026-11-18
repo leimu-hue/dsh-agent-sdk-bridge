@@ -51,13 +51,13 @@
     "client.js",
     "cordis.patch.yml",
     "README.md",
-    "FAQ.md",
     "DEVELOPMENT.md",
     "LICENSE",
     "NOTICE"
   ],
   "engines": {
-    "node": "^22.19.0 || >=24.0.0"
+    "node": "^22.19.0 || >=24.0.0",
+    "dsh": "^0.1.7-rc.1 || ^0.2.0-rc.1 || ^0.2.1-rc.1 || ^0.2.2-rc.1"
   },
   "publishConfig": {
     "registry": "https://registry.npmjs.org",
@@ -78,9 +78,9 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/cosmokit": "*",
-    "@deepseek-ai/dsh-attachment": "^0.1.7-rc.1 || ^0.2.0-rc.1",
-    "@deepseek-ai/dsh-llm": "^0.1.7-rc.1 || ^0.2.0-rc.1",
+    "@deepseek-ai/cosmokit": ">=1.8.5 <2",
+    "@deepseek-ai/dsh-attachment": "^0.1.7-rc.1 || ^0.2.0-rc.1 || ^0.2.1-rc.1 || ^0.2.2-rc.1",
+    "@deepseek-ai/dsh-llm": "^0.1.7-rc.1 || ^0.2.0-rc.1 || ^0.2.1-rc.1 || ^0.2.2-rc.1",
     "@deepseek-ai/schemastery": "^3.18.1"
   },
   "dependencies": {
@@ -92,6 +92,7 @@
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.4",
+    "@deepseek-ai/cosmokit": "~1.8.5",
     "@deepseek-ai/dsh-attachment": "0.2.0-rc.2",
     "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
     "@deepseek-ai/schemastery": "3.18.4",
@@ -104,7 +105,8 @@
     "build": "tsc -p tsconfig.json && tsdown",
     "build:clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\" && npm run build",
     "typecheck": "tsc -p tsconfig.json --noEmit false --emitDeclarationOnly",
+    "typecheck:test": "tsc -p tsconfig.test.json",
     "test": "vitest run",
-    "prepublishOnly": "npm run build:clean && npm test"
+    "prepublishOnly": "npm run build:clean && npm run typecheck:test && npm test"
   }
 }

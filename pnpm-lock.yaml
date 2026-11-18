@@ -11,9 +11,6 @@ importers:
       '@agentclientprotocol/sdk':
         specifier: ^1.9.0
         version: 1.9.0(zod@4.6.5)
-      '@deepseek-ai/cosmokit':
-        specifier: '*'
-        version: 1.8.5
       '@qoder-ai/qoder-agent-sdk':
         specifier: ^1.0.58
         version: 1.0.58(zod@4.6.5)
@@ -30,6 +27,9 @@ importers:
       '@deepseek-ai/cordis':
         specifier: 4.0.4
         version: 4.0.4
+      '@deepseek-ai/cosmokit':
+        specifier: ~1.8.5
+        version: 1.8.5
       '@deepseek-ai/dsh-attachment':
         specifier: 0.2.0-rc.2
         version: 0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-brand@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))

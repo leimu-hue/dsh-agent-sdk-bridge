@@ -1,0 +1,125 @@
+/**
+ * Runs the bundled Windows helper that installs and signs into a Qoder CLI
+ * (one helper per edition: `qoderclicn` for CN, `qodercli` for international).
+ *
+ * The settings page cannot do this by itself: a browser has no way to start a
+ * local process, and the plugin's own process is the one that already talks to
+ * the CLI. So the page asks this module, and this module spawns
+ * {@link SCRIPT_NAME} — the same script a user can double-click — with one of
+ * two fixed flags, and buffers its output so the page can show progress while
+ * the browser sign-in is still open.
+ *
+ * Nothing user-supplied reaches the command line: the mode is an allow-list of
+ * two keys mapped to two literal flags, and the script path comes from this
+ * package's own layout. The helper is idempotent, so a second press re-checks
+ * rather than reinstalling.
+ *
+ * @module dsh-agent-sdk-bridge/setup
+ */
+import type { QoderBrand } from '../core/brand.ts';
+/** File name of the CN helper, shipped under this package's `scripts/` directory. */
+export declare const SCRIPT_NAME = "setup-qoderclicn.bat";
+/** The helper script for one edition. */
+export declare function scriptNameOf(brand: QoderBrand): string;
+/** What the page may ask for: install/sign in, only sign in, sign out, uninstall. */
+export type SetupMode = 'configure' | 'login' | 'logout' | 'uninstall';
+/** Whether a value is one of the modes the page may request. */
+export declare function isSetupMode(value: unknown): value is SetupMode;
+/** Snapshot the page polls. Always safe to render; empty before the first run. */
+export interface SetupStatus {
+    running: boolean;
+    mode?: SetupMode;
+    startedAt?: number;
+    finishedAt?: number;
+    /** Exit code once finished; `null` when the process could not be started. */
+    code?: number | null;
+    lines: string[];
+    truncated: boolean;
+    /**
+     * Whether this edition's CLI is on the machine right now.
+     *
+     * Read from the same lookup a session uses, not from the last run's exit
+     * code: after an uninstall the page must offer "install" again, and a run
+     * that ended successfully months ago says nothing about today's machine.
+     */
+    installed: boolean;
+    /** Version of the installed CLI, when its package manifest could be read. */
+    cliVersion?: string;
+    /** Version this plugin's SDK speaks; the helper installs exactly this one. */
+    requiredCliVersion?: string;
+    /**
+     * The installed CLI speaks a different protocol build than the SDK.
+     *
+     * Sessions then die with a bare exit code, so the page warns here — before a
+     * sign-in — instead of letting the user log in and hit the failure in chat.
+     */
+    versionMismatch?: boolean;
+    /** Whether the last run was stopped from the page rather than finishing. */
+    cancelled?: boolean;
+}
+/**
+ * Locate one edition's helper inside this package.
+ *
+ * The host half is bundled to `lib/index.js` and the sources live under `src/`,
+ * so the package root sits one or more levels above this module. Walk up instead
+ * of pinning a depth: a fixed `..` broke as soon as `setup.ts` moved into a
+ * subdirectory.
+ *
+ * @param brand - which edition's script to find.
+ */
+export declare function setupScriptPath(brand?: QoderBrand): string | undefined;
+/** Why a run could not start, so the caller can pick a status of its own. */
+export type SetupFailure = 'busy' | 'unsupported' | 'missing-script';
+/**
+ * Start one edition's helper. Only one run per edition at a time; a finished
+ * one stays readable.
+ *
+ * @param brand - which edition to configure.
+ * @param mode - the fixed flag the page may ask for.
+ * @param onFinish - called once with the exit code.
+ */
+export declare function startSetup(brand: QoderBrand, mode: SetupMode, onFinish?: (code: number | null) => void): {
+    started: true;
+} | {
+    started: false;
+    reason: SetupFailure;
+    error: string;
+};
+/**
+ * The latest run of one edition, with any not-yet-newlined tail included for
+ * live display.
+ *
+ * @param brand - which edition's run to report.
+ */
+export declare function readSetupStatus(brand?: QoderBrand): SetupStatus;
+/**
+ * Abandon the running helper for one edition.
+ *
+ * `qodercli login` waits for the browser to finish the callback, so closing
+ * that tab left the page polling a process that would never return. Killing
+ * the run turns it into a finished one (`code` null) so the page can offer the
+ * buttons again instead of showing a spinner forever.
+ *
+ * @param brand - which edition's run to stop.
+ * @returns whether a run was actually in flight.
+ */
+export declare function cancelSetup(brand: QoderBrand): boolean;
+/**
+ * Compare two dotted versions, numerically per segment.
+ *
+ * A plain string compare would rank `1.1.9` above `1.1.10`, which is exactly
+ * backwards for the decision this feeds.
+ *
+ * @param left - one version, e.g. `1.1.84`.
+ * @param right - the other, e.g. `1.1.81`.
+ * @returns negative when `left` is older, positive when newer, 0 when equal.
+ */
+export declare function compareVersions(left: string, right: string): number;
+/**
+ * Abandon the running helper, if any.
+ *
+ * Called when the plugin is disposed. Killing `cmd.exe` does not reap the CLI it
+ * already launched, but the helper's own wait is bounded, so nothing hangs on
+ * the far end.
+ */
+export declare function stopSetup(): void;
