@@ -47,23 +47,26 @@
 
 | 版本 | npm 包 | 登录方式 | 登录态目录 |
 |---|---|---|---|
-| Qoder CN | `@qodercn-ai/qoderclicn` | 页面「一键配置」或 `qoderclicn login` | `~/.qoder-cn/.auth` |
-| Qoder 国际版 | `@qoder-ai/qodercli` | 页面「一键配置」或 `qodercli login` | `~/.qoder/.auth` |
+| Qoder CN | `@qodercn-ai/qoderclicn` | `qoderclicn login` | `~/.qoder-cn/.auth` |
+| Qoder 国际版 | `@qoder-ai/qodercli` | `qodercli login` | `~/.qoder/.auth` |
 | CodeBuddy | `@tencent-ai/agent-sdk`（已随插件安装） | 页面选择区域后点「登录」 | 由 CodeBuddy CLI 管理 |
-| MiniMax Code | `@minimax-ai/code`（页面可安装 / 卸载） | 页面「安装 CLI」后点「登录」 | `~/.minimax/auth/prod/<region>` |
+| MiniMax Code | `@minimax-ai/code` | `mcode login` | `~/.minimax/auth/prod/<region>` |
 
-**设置 → Qoder CN / Qoder 国际版** → 页面底部「一键配置」：缺 CLI 就装，未登录就拉起浏览器授权，
-输出实时显示。**设置 → CodeBuddy** → 顶部选择「国际版（codebuddy.ai）」或「国内版
+**设置 → CodeBuddy** → 顶部选择「国际版（codebuddy.ai）」或「国内版
 （copilot.tencent.com）」，点「登录」后在浏览器完成授权。两个区域的登录凭据分别保存在本机
 （`~/.dsh/agent-sdk-bridge/codebuddy-state.json`，权限 0600），切换区域会立即恢复对应账号的
 账号、额度与模型表，各自启用哪些模型和上下文窗口也按区域独立保存；未登录时不会读取或显示
 模型目录。浏览器由 CodeBuddy CLI 打开，插件不再重复打开。企业域名 / IOA 登录不在支持范围内。
 
-**设置 → MiniMax Code** → 先点「安装 / 更新 CLI」，再选择「国内站（account.minimax.cn）」或
+**设置 → MiniMax Code** → 先在本机装好 CLI，再选择「国内站（account.minimax.cn）」或
 「国际站（account.minimax.io）」并登录。MiniMax 官方 CLI 同一时间只允许一个站点在线，切换站点
-前需要先在原站点退出登录；插件不会复制或搬运另一个站点的凭据。安装使用官方要求的参数
-（`--include=optional --allow-scripts=@minimax-ai/code,better-sqlite3`），否则 npm 12 会拦截
-原生 SQLite 的安装脚本，装出来的 `mcode` 无法启动。
+前需要先在原站点退出登录；插件不会复制或搬运另一个站点的凭据。
+
+> 插件**不再随包附带安装/登录脚本**，也不代为执行 `npm install`：每个厂商的包名、推荐版本和
+> 参数都会变（例如 `@minimax-ai/code` 需要 `--include=optional
+> --allow-scripts=@minimax-ai/code,better-sqlite3`，否则 npm 12 会拦住原生 SQLite 的安装脚本，
+> 装出来的 `mcode` 起不来）。设置页只报告该 CLI 在本机是否就位，并说明安装与登录由你在终端完成，
+> 所以页面上的说法不会随上游命令变化而腐烂。
 
 两个站点都只在各自的服务区域内可用：本机 IP 不在国际站范围时，国际站会把请求重定向回国内站，
 插件会判定该区域不可用，提示「本机 IP 不在服务区域」并清空该区域的模型表，而不是显示一份
@@ -76,7 +79,7 @@ npm install -g @qodercn-ai/qoderclicn && qoderclicn login   # Qoder CN
 npm install -g @qoder-ai/qodercli       && qodercli login    # 国际版
 ```
 
-`qoderclicn status` / `qodercli status` 能列出 `Username` 即登录成功。Qoder 的一键配置只支持 Windows。
+`qoderclicn status` / `qodercli status` 能列出 `Username` 即登录成功。
 
 > `QODERCLI_PATH` 若指向另一版本的 CLI，对应版本会明确报错，而不是借用那个账号回答。国际版
 > 专用覆盖变量是 `QODER_CLI_PATH`。
@@ -89,12 +92,12 @@ npm install -g @qoder-ai/qodercli       && qodercli login    # 国际版
 - **额度 / 登录卡片**：Qoder 显示套餐、已用百分比进度、套餐 / 加量包 / 组织资源包剩余量、到期时间，
   以及官方用量与升级链接；CodeBuddy 显示登录区域、账号、积分余额与已用百分比，积分包默认折叠为
   一行摘要（包数、合计额度、最近到期），点「详细信息」才在限高滚动区里展开逐包明细
-  （通过其账号页使用的计费接口读取）；MiniMax Code 显示登录区域、CLI 安装状态、账号、套餐、
+  （通过其账号页使用的计费接口读取）；MiniMax Code 显示登录区域、CLI 是否就位、账号、套餐、
   剩余积分，以及 Token Plan 的 5 小时 / 每周剩余百分比、重置时间与进度条（与官网控制台同源）。
 - **模型清单**：来自账号实时目录，逐个启用 / 关闭、指定上下文窗口；倍率取自上游报价。
 - **高级设置**：并发会话数、目录缓存、超时、默认思考档位、模型别名、分组名称等，可折叠。
-- **CLI 分组**：Qoder 页面有一键配置 / 重新登录 / 退出登录 / 卸载 CLI；MiniMax Code 页面有安装 /
-  更新 / 卸载 CLI（卸载前确认，保留登录凭证），均附实时输出。
+- **CLI 提示**：Qoder 与 MiniMax Code 页面底部显示该 CLI 的安装与登录命令，以及本机是否已检测到
+  它；插件不安装、不登录，命令以文本给出（MiniMax 的 npm 参数另附说明）。
 - 再次打开页面时**先显示上次快照**，模型与账户在后台更新，不再每次都停在「正在读取」。
 
 每个 provider 只注册一条路由（`qoder-cn` / `qoder-intl` / `codebuddy` / `minimax-acp`），只服务

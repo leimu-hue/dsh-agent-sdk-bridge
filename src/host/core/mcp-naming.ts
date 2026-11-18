@@ -66,3 +66,25 @@ export function mcpToolPrefixes(serverName: string): string[] {
   const sanitized = `mcp__${serverName.replace(/[^a-zA-Z0-9]/g, '_')}__`
   return sanitized === registered ? [registered] : [registered, sanitized]
 }
+
+/**
+ * Whether a CLI tool name belongs to one host MCP server, in any spelling.
+ *
+ * @param name - the tool name as the CLI's `tool_use` block carried it.
+ * @param serverName - the name the server was registered with.
+ * @returns whether a namespace layer, and a tool name, are both there.
+ */
+export function isHostToolName(name: string, serverName: string): boolean {
+  return stripMcpNamespace(name, mcpToolPrefixes(serverName)) !== null
+}
+
+/**
+ * The bare host tool name, or the input unchanged when no layer matched.
+ *
+ * @param name - the tool name as the CLI's `tool_use` block carried it.
+ * @param serverName - the name the server was registered with.
+ * @returns the name the host dispatches on.
+ */
+export function bareHostToolName(name: string, serverName: string): string {
+  return stripMcpNamespace(name, mcpToolPrefixes(serverName)) ?? name
+}

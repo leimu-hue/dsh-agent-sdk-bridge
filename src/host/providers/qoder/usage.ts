@@ -19,7 +19,7 @@ import type { AccountInfo, UsageInfo } from '@qodercn-ai/qodercn-agent-sdk'
 import type { Live } from '../../core/live.ts'
 import { readLive } from '../../core/live.ts'
 import { cliConflictMessage, cliFailureText, foreignCliOverride, qoderCliOptions, resolveQoderCli } from '../../infra/cli.ts'
-import { withTimeout } from './models.ts'
+import { inertInput, withTimeout } from '../../core/async.ts'
 import type { QoderBrand } from '../../core/brand.ts'
 import { brandProfile } from '../../core/brand.ts'
 import type { QoderSdkModule } from '../../infra/sdk.ts'
@@ -50,11 +50,6 @@ export interface UsageSnapshot {
    * "last reading".
    */
   cliMissing?: boolean
-}
-
-/** Streaming prompt that never yields, so no model turn runs during the read. */
-async function* inertInput(): AsyncGenerator<never> {
-  await new Promise<never>(() => {})
 }
 
 /** Cached quota reader for one brand. */
@@ -165,10 +160,10 @@ export class QoderUsage {
       },
     })
     try {
-      const usage = await withTimeout(q.getUsageInfo(), timeoutMs)
+      const usage = await withTimeout(q.getUsageInfo(), timeoutMs, 'qoder request')
       // Account identity is secondary: a CLI that predates the control request
       // still delivers the quota, and the card simply omits the account line.
-      const account = await withTimeout(q.accountInfo(), timeoutMs).catch(() => undefined)
+      const account = await withTimeout(q.accountInfo(), timeoutMs, 'qoder request').catch(() => undefined)
       return {
         at,
         ...usage === null || usage === undefined ? { error: 'CLI 未返回额度信息' } : { usage },

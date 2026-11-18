@@ -17,14 +17,16 @@ import type {
 import type { CodeBuddyRegion } from '../../core/brand.ts'
 import { codeBuddyColdStream, CodeBuddyAccountReader, CodeBuddyAuth, CodeBuddyCatalog, CodeBuddySessionManager, CODEBUDDY_DEFAULT_CONTEXT_WINDOW, CODEBUDDY_DEFAULT_MAX_TOKENS, CODEBUDDY_CACHE_TTL_MS, CODEBUDDY_FETCH_TIMEOUT_MS } from './session.ts'
 import type { CodeBuddyModel, CodeBuddyUsageSnapshot } from './session.ts'
-import { reasoningInfo, planContinuation } from '../../core/adapter-kit.ts'
+import {
+  DenyList, NO_ALIASES, NO_MODELS, buildVisionFeed, modelInfo, planContinuation, reasoningInfo,
+  resolveAliasedModelId, resolveTurnImages,
+} from '../../core/adapter-kit.ts'
 import { cachedModels } from '../../core/model-cache.ts'
 import type { ImageRequestReader } from '../../core/adapter-kit.ts'
 import type { Live } from '../../core/live.ts'
 import { readLive, readLiveOptional } from '../../core/live.ts'
 import type { Feed, ImagePathResolver } from '../../core/render.ts'
-import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { feedImageRefs, feedToText, imageRefText, imageRefs, renderInitialFeed, renderSideChannelFeed, resolvedFeedParts } from '../../core/render.ts'
+import { feedToText, renderInitialFeed, renderSideChannelFeed } from '../../core/render.ts'
 import type { ChannelContent } from '../../core/host-session.ts'
 
 /** The CodeBuddy provider route. */
@@ -58,28 +60,12 @@ export interface CodeBuddyAdapterOptions {
   imagePath?: ImagePathResolver
 }
 
-const NO_MODELS: readonly string[] = []
-const NO_ALIASES: Readonly<Record<string, string>> = {}
-
 /** Map a harness-side id onto a CodeBuddy model value. */
 export function resolveCodeBuddyModelId(
   model: string,
   aliases: Readonly<Record<string, string>> = {},
 ): string {
-  const configured = aliases[model] ?? aliases[model.toLowerCase()]
-  if (configured !== undefined && configured.length > 0) return configured
-  const stripped = model.startsWith('codebuddy-') ? model.slice('codebuddy-'.length) : model
-  return stripped.length > 0 ? stripped : 'default-model'
-}
-
-function modelInfo(provider: string, model: CodeBuddyModel): LlmModelInfo {
-  return {
-    provider,
-    id: model.id,
-    name: model.name,
-    ...model.description === undefined ? {} : { description: model.description },
-    inputModalities: model.vision ? ['text', 'image'] : ['text'],
-  }
+  return resolveAliasedModelId(model, aliases, 'codebuddy-', 'default-model')
 }
 
 /** The CodeBuddy-backed adapter. */
@@ -89,7 +75,7 @@ export class CodeBuddyAdapter extends LlmAdapter {
   private readonly catalog: CodeBuddyCatalog
   private readonly accounts: CodeBuddyAccountReader
   private readonly auth = new CodeBuddyAuth()
-  private readonly disabledCache = new Map<CodeBuddyRegion, { key: string, set: ReadonlySet<string> }>()
+  private readonly deny = new DenyList<CodeBuddyRegion>()
   /** Last verified image capability, keyed `${region}:${model}`. */
   private readonly knownVision = new Map<string, boolean>()
 
@@ -117,14 +103,7 @@ export class CodeBuddyAdapter extends LlmAdapter {
   }
 
   private disabledFor(region: CodeBuddyRegion): ReadonlySet<string> {
-    const source = this.options.disabledModels?.(region) ?? NO_MODELS
-    // The live config returns a fresh array per read, so compare by content.
-    const key = source.join('\u0000')
-    const cached = this.disabledCache.get(region)
-    if (cached?.key === key) return cached.set
-    const set = new Set(source)
-    this.disabledCache.set(region, { key, set })
-    return set
+    return this.deny.of(region, this.options.disabledModels?.(region) ?? NO_MODELS)
   }
 
   private get aliases(): Readonly<Record<string, string>> {
@@ -214,99 +193,26 @@ export class CodeBuddyAdapter extends LlmAdapter {
   }
 
   /**
-   * Resolve a feed's images into base64 for the CLI's vision blocks.
-   *
-   * Only references the host can actually read become pixels; the rest keep
-   * their handle text, so one unreadable attachment degrades that part of the
-   * prompt instead of failing the whole turn.
-   */
-  private async resolveFeedImages(
-    feed: Feed,
-    vision: boolean,
-    signal?: AbortSignal,
-  ): Promise<ReadonlyMap<string, { data: string, mediaType: string }>> {
-    return await this.resolveImages(feedImageRefs(feed), vision, signal)
-  }
-
-  /**
-   * Images carried by the messages the inner session has not seen yet.
-   *
-   * Tool results are included: `read_image` hands its pixels back through the
-   * MCP tool result, not through the prompt text, so this tail is the only
-   * place the bytes can come from.
-   */
-  private async resolveTurnImages(
-    tail: readonly RequestMessage[],
-    vision: boolean,
-    signal?: AbortSignal,
-  ): Promise<ReadonlyMap<string, { data: string, mediaType: string }>> {
-    const refs = tail.flatMap(message => message.role === 'assistant' ? [] : imageRefs(message.content))
-    return await this.resolveImages(refs, vision, signal)
-  }
-
-  private async resolveImages(
-    refs: readonly ImageAttachmentRef[],
-    vision: boolean,
-    signal?: AbortSignal,
-  ): Promise<ReadonlyMap<string, { data: string, mediaType: string }>> {
-    const map = new Map<string, { data: string, mediaType: string }>()
-    const readImage = this.options.readImage
-    if (!vision || readImage === undefined) return map
-    for (const ref of refs) {
-      const key = String(ref.attachmentId)
-      if (map.has(key)) continue
-      try {
-        const image = await readImage(ref, signal)
-        if (image !== undefined) {
-          map.set(key, { data: Buffer.from(image.bytes).toString('base64'), mediaType: image.mediaType })
-        }
-      } catch {
-        // Degrade this attachment to its handle text.
-      }
-    }
-    return map
-  }
-
-  /**
    * Turn a feed into what one CLI turn receives.
    *
-   * A text-only feed stays a plain string (the historical shape). A feed with
+   * A text-only feed stays a plain string (the historical shape); a feed with
    * readable images becomes the SDK's `ContentBlock[]`, because that is the
-   * only shape the CLI sends to the model as pixels.
+   * only shape the CLI sends to the model as pixels. See {@link buildVisionFeed}.
    */
   private async buildFeed(
     feed: Feed,
     vision: boolean,
     signal?: AbortSignal,
   ): Promise<string | ChannelContent[]> {
-    if (typeof feed === 'string') return feed
-    if (!vision) return feedToText(feed, this.options.imagePath)
-    const images = await this.resolveFeedImages(feed, vision, signal)
-    const parts = resolvedFeedParts(feed, images)
-    if (!parts.some(part => part.type !== 'text')) return parts.map(part => part.type === 'text' ? part.text : '').join('\n\n')
-    const content: ChannelContent[] = []
-    for (const part of parts) {
-      if (part.type === 'text') {
-        content.push({ type: 'text', text: part.text })
-        continue
-      }
-      // The pixels let the model read the image; this handle lets it find and
-      // edit the source file. Without it a "modify this image" turn searches
-      // the workspace for a file that was never there.
-      const path = this.options.imagePath?.(part.attachment)
-      content.push({
-        type: 'text',
-        text: part.type === 'image-unreadable' && path === undefined
-          ? `[图片附件 ${String(part.attachment.attachmentId)} 本次未能读取，请基于文字内容继续]`
-          : imageRefText(part.attachment, path),
-      })
-      if (part.type === 'image-unreadable') continue
-      content.push({
-        type: 'image',
-        source: { type: 'base64', media_type: part.mediaType, data: part.data },
-      })
-    }
-    return content
+    return await buildVisionFeed<ChannelContent>(feed, vision, {
+      imagePath: this.options.imagePath,
+      readImage: this.options.readImage,
+      signal,
+      blocks: {
+        text: text => ({ type: 'text', text }),
+        image: (data, mediaType) => ({ type: 'image', source: { type: 'base64', media_type: mediaType, data } }),
+      },
+    })
   }
 
   /**
@@ -419,7 +325,7 @@ export class CodeBuddyAdapter extends LlmAdapter {
     // carry pixels (`read_image`), and the MCP result is the only channel that
     // reaches the inner model for this turn.
     const vision = await this.modelVision(options.model)
-    const images = await this.resolveTurnImages(tail, vision, options.signal)
+    const images = await resolveTurnImages(tail, vision, this.options.readImage, options.signal)
     session.deliverToolResults(tail, images)
     const plan = planContinuation(session.fedMessages, options.messages)
     if (plan.rebuild) {

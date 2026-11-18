@@ -230,12 +230,6 @@ describe('settings API brand routing', () => {
     expect(qoderAuth.status()).toBe(404)
   })
 
-  it('refuses the CLI setup route for CodeBuddy', async () => {
-    const r = response()
-    await handleApi(request(`${API_PREFIX}/setup?brand=codebuddy`), r.res, ADAPTERS)
-    expect(r.status()).toBe(400)
-  })
-
   it('serves the MiniMax catalog and account, per login region', async () => {
     const global = response()
     await handleApi(request(`${API_PREFIX}/models?brand=minimax&region=global`), global.res, ADAPTERS)
@@ -313,40 +307,23 @@ describe('settings API brand routing', () => {
     expect(ended.body()).toMatchObject({ brand: 'minimax', signedIn: false })
   })
 
-  it('routes the MiniMax installer from the POST body, not the query string', async () => {
-    const status = response()
-    await handleApi(request(`${API_PREFIX}/setup?brand=minimax`), status.res, ADAPTERS)
-    expect(status.status()).toBe(200)
-    expect(typeof status.body().installed).toBe('boolean')
+  it('offers no install route, for any provider', async () => {
+    // Installing a vendor CLI is deliberately not this plugin's job: the flags
+    // and versions move with each release, so the page only reports what the
+    // machine is missing.
+    for (const url of [
+      `${API_PREFIX}/setup?brand=cn`,
+      `${API_PREFIX}/setup?brand=minimax`,
+      `${API_PREFIX}/setup?brand=codebuddy`,
+    ]) {
+      const r = response()
+      await handleApi(request(url), r.res, ADAPTERS)
+      expect(r.status(), url).toBe(404)
+    }
 
-    // The page posts `/setup` without a query brand, so the body alone must
-    // reach the MiniMax branch. An invalid mode is rejected there — before the
-    // installer spawns — and the message proves which branch answered.
-    const badMode = response()
-    await handleApi(request(`${API_PREFIX}/setup`, 'POST', { brand: 'minimax', mode: 'configure' }), badMode.res, ADAPTERS)
-    expect(badMode.status()).toBe(400)
-    expect(badMode.body().error).toBe('mode 只接受 install 或 uninstall')
-
-    // Qoder still answers with its own mode vocabulary for the same request.
-    const qoderMode = response()
-    await handleApi(request(`${API_PREFIX}/setup`, 'POST', { brand: 'cn', mode: 'bogus' }), qoderMode.res, ADAPTERS)
-    expect(qoderMode.status()).toBe(400)
-    expect(qoderMode.body().error).toBe('mode 只接受 configure、login、logout、uninstall 或 cancel')
-
-    const noBrand = response()
-    await handleApi(request(`${API_PREFIX}/setup`, 'POST', { mode: 'install' }), noBrand.res, ADAPTERS)
-    expect(noBrand.status()).toBe(400)
-  })
-
-  it('cancels a stalled Qoder login from the page', async () => {
-    // `qodercli login` waits for the browser callback; closing that tab used to
-    // leave the page polling forever. The cancel action settles the run, so the
-    // status comes back not-running and the buttons return.
-    const cancelled = response()
-    await handleApi(request(`${API_PREFIX}/setup`, 'POST', { brand: 'cn', mode: 'cancel' }), cancelled.res, ADAPTERS)
-    expect(cancelled.status()).toBe(200)
-    expect(cancelled.body()).toMatchObject({ running: false })
-    expect(typeof cancelled.body().installed).toBe('boolean')
+    const posted = response()
+    await handleApi(request(`${API_PREFIX}/setup`, 'POST', { brand: 'cn', mode: 'login' }), posted.res, ADAPTERS)
+    expect(posted.status()).toBe(405)
   })
 
   it('refuses a brand it does not serve instead of defaulting to CN', async () => {
@@ -364,15 +341,5 @@ describe('settings API brand routing', () => {
     const r = response()
     await handleApi(request(`${API_PREFIX}/models`), r.res, ADAPTERS)
     expect(r.body().brand).toBe('cn')
-  })
-
-  it('rejects an unknown setup mode and an unknown setup brand', async () => {
-    const badMode = response()
-    await handleApi(request(`${API_PREFIX}/setup`, 'POST', { brand: 'cn', mode: 'check' }), badMode.res, ADAPTERS)
-    expect(badMode.status()).toBe(400)
-
-    const badBrand = response()
-    await handleApi(request(`${API_PREFIX}/setup`, 'POST', { brand: 'other', mode: 'login' }), badBrand.res, ADAPTERS)
-    expect(badBrand.status()).toBe(400)
   })
 })

@@ -22,7 +22,7 @@ import type { QoderBrand } from '../../core/brand.ts'
 import { cliConflictMessage, cliFailureText, foreignCliOverride, qoderCliOptions, resolveQoderCli } from '../../infra/cli.ts'
 import type { Live } from '../../core/live.ts'
 import { readLive } from '../../core/live.ts'
-import { stripMcpNamespace } from '../../core/mcp-naming.ts'
+import { bareHostToolName } from '../../core/mcp-naming.ts'
 import { feedImageRefs, feedTextLength, feedWideCharCount, renderInitialFeed } from '../../core/render.ts'
 import { isDaemonConflict, loadSdk, probeDaemon, resetSdk } from '../../infra/sdk.ts'
 import { TurnOutputAccounting, estimateTextTokens } from '../../core/tokens.ts'
@@ -278,7 +278,7 @@ export function meteredUsage(
  * way out. See {@link stripMcpNamespace} for why one layer is not enough.
  */
 export function hostToolName(name: string): string {
-  return stripMcpNamespace(name, [MCP_TOOL_PREFIX]) ?? name
+  return bareHostToolName(name, MCP_SERVER_NAME)
 }
 
 /** Deny native tools, allow this adapter's MCP tools. */

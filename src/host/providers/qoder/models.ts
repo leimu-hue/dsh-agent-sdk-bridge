@@ -23,6 +23,7 @@ import type { Live } from '../../core/live.ts'
 import { readLive } from '../../core/live.ts'
 import type { QoderSdkModule } from '../../infra/sdk.ts'
 import { withSdk } from '../../infra/sdk.ts'
+import { inertInput, withTimeout } from '../../core/async.ts'
 
 /** How long a fetched catalog stays fresh by default. */
 export const DEFAULT_MODEL_CACHE_TTL_MS = 5 * 60_000
@@ -233,18 +234,22 @@ export class QoderModelCatalog {
       // real list, so the catalogue has to be read in that order. Reporting
       // the empty answer instead made the settings page show 0/0 and claim a
       // working install was missing.
-      const account = await withTimeout(q.accountInfo(), timeout).catch(() => undefined)
+      const account = await withTimeout(q.accountInfo(), timeout, 'qoder request').catch(() => undefined)
       const uid = account?.userId
       const models = await withTimeout(
         q.getAvailableModels(uid === undefined ? {} : { uid }),
         timeout,
+        'qoder request',
       )
       if (models.length > 0) return models
       // Still empty: ask the CLI for its on-disk copy, then the server copy,
       // before letting the page conclude the account has no models.
       for (const strategy of ['cache', 'live'] as const) {
-        const fallback = await withTimeout(q.getAvailableModels({ ...uid === undefined ? {} : { uid }, fetchStrategy: strategy }), timeout)
-          .catch(() => [] as ModelInfo[])
+        const fallback = await withTimeout(
+          q.getAvailableModels({ ...uid === undefined ? {} : { uid }, fetchStrategy: strategy }),
+          timeout,
+          'qoder request',
+        ).catch(() => [] as ModelInfo[])
         if (fallback.length > 0) return fallback
       }
       return []
@@ -311,19 +316,4 @@ function officialOnly(models: readonly ModelInfo[]): readonly ModelInfo[] {
 export function priceFactorOf(entry: { priceFactor?: number }): number | undefined {
   const value = entry.priceFactor
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined
-}
-
-/** Streaming prompt that never yields, so no model turn runs during the fetch. */
-async function* inertInput(): AsyncGenerator<never> {
-  await new Promise<never>(() => {})
-}
-
-export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => { reject(new Error(`qoder request timed out after ${ms}ms`)) }, ms)
-    promise.then(
-      (value) => { clearTimeout(timer); resolve(value) },
-      (error: unknown) => { clearTimeout(timer); reject(error) },
-    )
-  })
 }

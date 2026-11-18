@@ -33,8 +33,6 @@ import { MinimaxAdapter, MINIMAX_PROVIDER } from './providers/minimax/adapter.ts
 import { API_PREFIX, handleApi } from './surface/api.ts'
 import type { BrandId } from './core/brand.ts'
 import { BRANDS } from './core/brand.ts'
-import { stopSetup } from './infra/setup.ts'
-import { stopMinimaxSetup } from './infra/minimax-cli.ts'
 import type { LiveConfig, ParsedConfig } from './core/config.ts'
 import { Config as ConfigSchema, liveConfig } from './core/config.ts'
 
@@ -105,10 +103,6 @@ export type {
   MinimaxAccountInfo, MinimaxAuthStatus, MinimaxCreditInfo, MinimaxMcpToolResult,
   MinimaxModel, MinimaxPlanInfo, MinimaxQuotaWindow, MinimaxUsageSnapshot,
 } from './providers/minimax/session.ts'
-export {
-  MinimaxCliSetup, readMinimaxSetupStatus, resolveMinimaxCli, startMinimaxSetup, stopMinimaxSetup,
-} from './infra/minimax-cli.ts'
-export type { MinimaxSetupMode, MinimaxSetupStatus, MinimaxCliSpec } from './infra/minimax-cli.ts'
 export type { CodeBuddyAdapterOptions } from './providers/codebuddy/adapter.ts'
 export {
   CodeBuddyAuth, CodeBuddyAccountReader, CodeBuddyCatalog, CodeBuddySession, CodeBuddySessionManager,
@@ -122,6 +116,8 @@ export type {
 export { BRANDS, CN_BRAND, GLOBAL_BRAND, CODEBUDDY_BRAND, brandProfile, codeBuddyEnvironment, isBrandId } from './core/brand.ts'
 export type { BrandId, BrandProfile, CodeBuddyRegion, QoderBrand } from './core/brand.ts'
 export { loadCodeBuddySdk, loadSdk } from './infra/sdk.ts'
+export { resolveMinimaxCli } from './infra/minimax-cli.ts'
+export type { MinimaxCliSpec } from './infra/minimax-cli.ts'
 export { QoderUsage, DEFAULT_USAGE_CACHE_TTL_MS, DEFAULT_USAGE_TIMEOUT_MS } from './providers/qoder/usage.ts'
 export type { UsageSnapshot } from './providers/qoder/usage.ts'
 export { QoderSession, QoderSessionManager } from './providers/qoder/session.ts'
@@ -131,11 +127,9 @@ export { NARROW_CHARS_PER_TOKEN, WIDE_CHARS_PER_TOKEN, countWideChars, estimateT
 export { QODER_MODELS, MODEL_ALIASES, resolveQoderModelId, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_TOKENS } from './core/catalog.ts'
 export { QoderModelCatalog, priceFactorOf } from './providers/qoder/models.ts'
 export { API_PREFIX, buildRows, handleApi } from './surface/api.ts'
-export { SCRIPT_NAME, isSetupMode, readSetupStatus, setupScriptPath, startSetup, stopSetup } from './infra/setup.ts'
-export type { SetupFailure, SetupMode, SetupStatus } from './infra/setup.ts'
 export type { Live } from './core/live.ts'
 export { readLive, readLiveOptional } from './core/live.ts'
-export { liveConfig, resolveConfig } from './core/config.ts'
+export { liveConfig } from './core/config.ts'
 // The authoring shape is re-exported as `ConfigShape` because this module also
 // exports the `Config` *schema* value the loader reads; one module cannot
 // re-export a type and declare a value under the same name.
@@ -410,13 +404,6 @@ export function apply(ctx: Context, config: ParsedConfig): void {
     ;(adapters.codebuddy as CodeBuddyAdapter).close()
     ;(adapters.minimax as MinimaxAdapter).close()
   }, 'llm-qoder-cn.sessions')
-
-  // A CLI helper still running when this plugin is reloaded or removed would
-  // otherwise keep writing into a page that can no longer read it.
-  ctx.effect(() => () => {
-    stopSetup()
-    stopMinimaxSetup()
-  }, 'llm-qoder-cn.setup')
 
   // The settings page's data source: the live catalog joined with the user's
   // on/off and window choices. Served from its own route because the catalog

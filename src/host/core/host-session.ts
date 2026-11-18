@@ -231,17 +231,26 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+/** One unit of a turn's output: a stream chunk, or the end marker. */
 export type QueueItem =
   | { kind: 'chunk', chunk: StreamChunk }
   | { kind: 'turn-end', reason: FinishReason, usage?: TokenUsage }
 
-/** Unbounded FIFO the consumer pushes into and the active turn pumps out. */
-export class TurnQueue implements AsyncIterable<QueueItem> {
-  private readonly items: QueueItem[] = []
-  private resolve: ((result: IteratorResult<QueueItem>) => void) | null = null
+/**
+ * Unbounded FIFO the consumer pushes into and the active turn pumps out.
+ *
+ * One implementation for the two shapes the backends need: an
+ * `AsyncIterable` (Qoder, CodeBuddy pump it with `for await`) and a plain
+ * `next()` read (MiniMax's ACP session, which races every read against the
+ * turn's abort signal). Closing it releases a parked reader, so a session that
+ * is torn down mid-turn never leaves one waiting.
+ */
+export class TurnQueue<T = QueueItem> implements AsyncIterable<T> {
+  private readonly items: T[] = []
+  private resolve: ((result: IteratorResult<T>) => void) | null = null
   private closed = false
 
-  push(item: QueueItem): void {
+  push(item: T): void {
     if (this.closed) return
     if (this.resolve !== null) {
       const settle = this.resolve
@@ -261,20 +270,26 @@ export class TurnQueue implements AsyncIterable<QueueItem> {
     }
   }
 
-  [Symbol.asyncIterator](): AsyncIterator<QueueItem> {
-    return {
-      next: (): Promise<IteratorResult<QueueItem>> => {
-        const item = this.items.shift()
-        if (item !== undefined) return Promise.resolve({ value: item, done: false })
-        if (this.closed) return Promise.resolve({ value: undefined, done: true })
-        return new Promise(settle => { this.resolve = settle })
-      },
-    }
+  [Symbol.asyncIterator](): AsyncIterator<T> {
+    return { next: (): Promise<IteratorResult<T>> => this.pump() }
+  }
+
+  /** The next item, or undefined once the queue is closed and drained. */
+  async next(): Promise<T | undefined> {
+    const result = await this.pump()
+    return result.done === true ? undefined : result.value
   }
 
   /** Whether the turn already ended; late pushes are dropped. */
   get isClosed(): boolean {
     return this.closed
+  }
+
+  private pump(): Promise<IteratorResult<T>> {
+    const item = this.items.shift()
+    if (item !== undefined) return Promise.resolve({ value: item, done: false })
+    if (this.closed) return Promise.resolve({ value: undefined, done: true })
+    return new Promise(settle => { this.resolve = settle })
   }
 }
 

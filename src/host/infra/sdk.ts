@@ -43,6 +43,7 @@ import type * as QoderSdk from '@qodercn-ai/qodercn-agent-sdk'
 import type * as CodeBuddySdk from '@tencent-ai/agent-sdk'
 import type { CodeBuddyRegion, QoderBrand } from '../core/brand.ts'
 import { brandProfile, codeBuddyEnvironment } from '../core/brand.ts'
+import { inertInput } from '../core/async.ts'
 import { qoderCliOptions } from './cli.ts'
 
 /** The subset of the Qoder SDK surface this plugin uses, as one module type. */
@@ -220,7 +221,7 @@ export async function withSdk<T>(
 export async function probeDaemon(brand: QoderBrand): Promise<void> {
   const sdk = await loadSdk(brand)
   const q = sdk.query({
-    prompt: (async function* () { await new Promise<never>(() => {}) })(),
+    prompt: inertInput(),
     options: {
       ...qoderCliOptions(brand),
       auth: sdk.qodercliAuth(),

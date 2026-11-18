@@ -16,7 +16,7 @@
 import { updateVolatile } from '@deepseek-ai/cosmokit'
 import { describe, expect, it } from 'vitest'
 import {
-  Config, CODEBUDDY_PROVIDER, MINIMAX_PROVIDER, QODER_INTL_PROVIDER, QODER_PROVIDER, apply, liveConfig, resolveConfig,
+  Config, CODEBUDDY_PROVIDER, MINIMAX_PROVIDER, QODER_INTL_PROVIDER, QODER_PROVIDER, apply, liveConfig,
 } from '../../src/host/index.ts'
 
 /**
@@ -193,28 +193,6 @@ describe('live config', () => {
     recorded.volatileListener?.([['cnEnabled', 'codebuddyEnabled', 'minimaxEnabled']])
     expect(recorded.routes).toEqual([])
     expect(recorded.directory).toEqual([])
-  })
-
-  it('keeps the two config views equivalent, including defaults', () => {
-    const mounted = parse({ disabledModels: ['auto'], modelContextWindows: { auto: 1 } })
-    const live = liveConfig(mounted)
-    const snapshot = resolveConfig(mounted)
-
-    expect({
-      disabledModels: live.disabledModels(),
-      modelContextWindows: live.modelContextWindows(),
-      maxSessions: live.maxSessions(),
-      defaultReasoningEffort: live.defaultReasoningEffort(),
-      codebuddyEnabled: live.codebuddyEnabled(),
-      codebuddyRegion: live.codebuddyRegion(),
-    }).toEqual({
-      disabledModels: snapshot.disabledModels,
-      modelContextWindows: snapshot.modelContextWindows,
-      maxSessions: snapshot.maxSessions,
-      defaultReasoningEffort: snapshot.defaultReasoningEffort,
-      codebuddyEnabled: snapshot.codebuddyEnabled,
-      codebuddyRegion: snapshot.codebuddyRegion,
-    })
   })
 
   it('runs on defaults when the profile row carries no config at all', () => {

@@ -41,7 +41,9 @@ import { minimaxCliRegion } from '../../core/brand.ts'
 import type { MinimaxRegion } from '../../core/brand.ts'
 import type { Live } from '../../core/live.ts'
 import { readLive } from '../../core/live.ts'
-import { stripMcpNamespace } from '../../core/mcp-naming.ts'
+import { bareHostToolName, isHostToolName } from '../../core/mcp-naming.ts'
+import { TurnQueue } from '../../core/host-session.ts'
+import { withTimeout } from '../../core/async.ts'
 import { resolveMinimaxCli, minimaxCliArgs } from '../../infra/minimax-cli.ts'
 import { estimateTextTokens } from '../../core/tokens.ts'
 
@@ -184,12 +186,9 @@ export function minimaxCliCommand(): string {
   return 'mcode'
 }
 
-/** The host-side MCP namespace the CLI exposes for the injected server. */
-const HOST_TOOL_PREFIXES = [`mcp__${MINIMAX_MCP_SERVER}__`, `mcp__${MINIMAX_MCP_SERVER.replace(/[^a-zA-Z0-9]/g, '_')}__`]
-
 /** Whether a CLI tool name belongs to this plugin's MCP server. */
 export function isHostMcpTool(name: string): boolean {
-  return stripMcpNamespace(name, HOST_TOOL_PREFIXES) !== null
+  return isHostToolName(name, MINIMAX_MCP_SERVER)
 }
 
 /**
@@ -201,7 +200,7 @@ export function isHostMcpTool(name: string): boolean {
  * registered under `edit`. See {@link stripMcpNamespace}.
  */
 export function hostMcpToolName(name: string): string {
-  return stripMcpNamespace(name, HOST_TOOL_PREFIXES) ?? name
+  return bareHostToolName(name, MINIMAX_MCP_SERVER)
 }
 
 /** Thinking-effort values an ACP config option advertises, minus `default`. */
@@ -1079,45 +1078,6 @@ type SessionEvent =
   | { kind: 'prompt-error', error: Error }
   | { kind: 'closed', error: Error }
 
-/** A single-consumer async event queue. */
-class EventQueue {
-  private readonly items: SessionEvent[] = []
-  private waiter: ((event: SessionEvent | undefined) => void) | null = null
-  private closed = false
-
-  push(event: SessionEvent): void {
-    if (this.closed) return
-    if (this.waiter !== null) {
-      const settle = this.waiter
-      this.waiter = null
-      settle(event)
-      return
-    }
-    this.items.push(event)
-  }
-
-  close(): void {
-    if (this.closed) return
-    this.closed = true
-    if (this.waiter !== null) {
-      const settle = this.waiter
-      this.waiter = null
-      settle(undefined)
-    }
-  }
-
-  get isClosed(): boolean {
-    return this.closed
-  }
-
-  next(): Promise<SessionEvent | undefined> {
-    const item = this.items.shift()
-    if (item !== undefined) return Promise.resolve(item)
-    if (this.closed) return Promise.resolve(undefined)
-    return new Promise<SessionEvent | undefined>(resolve => { this.waiter = resolve })
-  }
-}
-
 /** A pending host tool call, waiting for the harness to deliver its result. */
 interface PendingHostCall {
   resolve: (result: MinimaxMcpToolResult) => void
@@ -1858,7 +1818,7 @@ const HOST_TOOL_POLICY = [
  */
 export class MinimaxSession {
   private acp: MinimaxAcp | null = null
-  private readonly events = new EventQueue()
+  private readonly events = new TurnQueue<SessionEvent>()
   private readonly bridge: MinimaxMcpBridge
   private readonly pending = new Map<string, PendingHostCall>()
   private readonly toolResultTimeoutMs: number
@@ -2355,17 +2315,6 @@ function rejectPending(pending: Map<string, PendingHostCall>, error: Error): voi
     entry.reject(error)
     pending.delete(callId)
   }
-}
-
-/** Wait for a promise, or give up after `ms`. */
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => { reject(new Error(`${label} timed out after ${ms}ms`)) }, ms)
-    promise.then(
-      value => { clearTimeout(timer); resolve(value) },
-      error => { clearTimeout(timer); reject(error) },
-    )
-  })
 }
 
 /** Await a queue read, giving up when the harness aborts the turn. */

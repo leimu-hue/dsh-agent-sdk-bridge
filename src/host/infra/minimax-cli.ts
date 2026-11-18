@@ -1,20 +1,20 @@
 /**
- * The MiniMax Code CLI (`mcode`): locating it and running its installer.
+ * The MiniMax Code CLI (`mcode`): locating it, and how to spawn it.
  *
  * MiniMax ships `@minimax-ai/code` as a global npm package whose `mcode`
- * launcher is a Node shim. Its native SQLite dependency is installed by a
- * postinstall script, and npm 12 blocks install scripts unless they are named
- * with `--allow-scripts`; a plain `npm i -g` leaves a CLI that cannot start.
- * The installer below therefore passes the flags the package documents.
+ * launcher is a Node shim; its native SQLite dependency comes from the
+ * package's own postinstall. The plugin deliberately does NOT install it: the
+ * exact npm flags, package version and dependency set belong to MiniMax and
+ * change with their releases, so the page only reports whether a CLI is present
+ * and leaves installing it to the user. What remains here is the lookup, which
+ * is the half that has to be exact.
  *
  * @module dsh-agent-sdk-bridge/minimax-cli
  */
 
-import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, delimiter } from 'node:path'
-import { TextDecoder } from 'node:util'
+import { delimiter, dirname, join } from 'node:path'
 
 /** How to invoke the CLI: an executable plus its leading arguments. */
 export interface MinimaxCliSpec {
@@ -24,16 +24,8 @@ export interface MinimaxCliSpec {
   cliPath?: string
 }
 
-/** The npm package and the version verified to work with native SQLite. */
+/** The npm package the launcher belongs to. */
 const PACKAGE = '@minimax-ai/code'
-const INSTALL_VERSION = '0.6.12'
-const INSTALL_FLAGS = [
-  '--ignore-scripts=false',
-  '--include=optional',
-  '--allow-scripts=@minimax-ai/code,better-sqlite3',
-  '--registry', 'https://registry.npmjs.org/',
-  '--foreground-scripts',
-]
 
 /**
  * The Node interpreter that can load the CLI's native SQLite module.
@@ -135,163 +127,4 @@ export function resolveMinimaxCli(): MinimaxCliSpec | undefined {
 /** The spawn argument list for one CLI invocation. */
 export function minimaxCliArgs(spec: MinimaxCliSpec, args: readonly string[]): string[] {
   return [...spec.args, ...args]
-}
-
-/** What the settings page may ask the installer to do. */
-export type MinimaxSetupMode = 'install' | 'uninstall'
-
-/** Whether a value names an installer action. */
-export function isMinimaxSetupMode(value: unknown): value is MinimaxSetupMode {
-  return value === 'install' || value === 'uninstall'
-}
-
-/** One installer run's state, kept for the process lifetime. */
-interface SetupRun {
-  child: ChildProcess
-  mode: MinimaxSetupMode
-  startedAt: number
-  finishedAt?: number
-  code?: number | null
-  lines: string[]
-  pending: string
-  decoder: TextDecoder
-  truncated: boolean
-}
-
-/** Cap on kept output. */
-const MAX_LINES = 400
-
-let current: SetupRun | undefined
-
-/** Snapshot the page polls. */
-export interface MinimaxSetupStatus {
-  running: boolean
-  mode?: MinimaxSetupMode
-  startedAt?: number
-  finishedAt?: number
-  code?: number | null
-  lines: string[]
-  truncated: boolean
-  installed: boolean
-  cliPath?: string
-}
-
-function absorb(run: SetupRun, chunk: Uint8Array, done: boolean): void {
-  run.pending += run.decoder.decode(chunk, { stream: !done })
-  const parts = run.pending.split(/\r\n|\r|\n/)
-  run.pending = done ? '' : (parts.pop() ?? '')
-  for (const part of parts) {
-    if (part.trim() === '') continue
-    run.lines.push(part)
-  }
-  if (done && run.pending.trim() !== '') run.lines.push(run.pending.trim())
-  while (run.lines.length > MAX_LINES) {
-    run.lines.shift()
-    run.truncated = true
-  }
-}
-
-/**
- * Start the npm installer or uninstaller.
- *
- * The command is fixed: the mode is an allow-list and no user input reaches
- * argv. npm itself is run through cmd.exe on Windows because npm is a `.cmd`
- * shim and Node refuses to spawn it directly on recent versions.
- */
-export function startMinimaxSetup(
-  mode: MinimaxSetupMode,
-  onFinish?: (code: number | null) => void,
-): { started: true } | { started: false, reason: 'busy' | 'unsupported', error: string } {
-  if (current !== undefined && current.finishedAt === undefined) {
-    return { started: false, reason: 'busy', error: '已经有一次 MiniMax CLI 安装在跑了，请等它结束。' }
-  }
-  if (process.platform !== 'win32' && mode === 'install') {
-    return {
-      started: false,
-      reason: 'unsupported',
-      error: '一键安装 MiniMax CLI 目前只支持 Windows；请在终端手动执行 npm install -g @minimax-ai/code。',
-    }
-  }
-
-  const npmArgs = mode === 'install'
-    ? ['install', '--global', `${PACKAGE}@${INSTALL_VERSION}`, ...INSTALL_FLAGS]
-    : ['uninstall', '--global', PACKAGE]
-  const command = process.platform === 'win32' ? (process.env.ComSpec ?? 'cmd.exe') : 'npm'
-  const args = process.platform === 'win32'
-    ? ['/d', '/c', 'npm', ...npmArgs]
-    : npmArgs
-
-  const run: SetupRun = {
-    child: undefined as unknown as ChildProcess,
-    mode,
-    startedAt: Date.now(),
-    lines: [],
-    pending: '',
-    decoder: new TextDecoder('utf-8'),
-    truncated: false,
-  }
-  const child = spawn(command, args, {
-    cwd: homedir(),
-    windowsHide: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-  run.child = child
-  current = run
-
-  const finish = (code: number | null): void => {
-    if (run.finishedAt !== undefined) return
-    run.finishedAt = Date.now()
-    run.code = code
-    try {
-      onFinish?.(code)
-    } catch (error) {
-      run.lines.push(`收尾回调失败：${error instanceof Error ? error.message : String(error)}`)
-    }
-  }
-  child.stdout?.on('data', (chunk: Buffer) => absorb(run, chunk, false))
-  child.stderr?.on('data', (chunk: Buffer) => absorb(run, chunk, false))
-  child.on('error', error => {
-    run.lines.push(`无法启动 npm：${error instanceof Error ? error.message : String(error)}`)
-    finish(null)
-  })
-  child.on('close', code => {
-    absorb(run, new Uint8Array(), true)
-    finish(code)
-  })
-  return { started: true }
-}
-
-/** The latest installer run, with any not-yet-newlined tail included. */
-export function readMinimaxSetupStatus(): MinimaxSetupStatus {
-  const spec = resolveMinimaxCli()
-  const installed = spec !== undefined
-  if (current === undefined) {
-    return { running: false, lines: [], truncated: false, installed, ...spec?.cliPath === undefined ? {} : { cliPath: spec.cliPath } }
-  }
-  const run = current
-  const lines = run.pending.trim() === ''
-    ? run.lines
-    : [...run.lines, run.pending.trim()]
-  return {
-    running: run.finishedAt === undefined,
-    mode: run.mode,
-    startedAt: run.startedAt,
-    ...run.finishedAt === undefined ? {} : { finishedAt: run.finishedAt, code: run.code ?? null },
-    lines,
-    truncated: run.truncated,
-    installed,
-    ...spec?.cliPath === undefined ? {} : { cliPath: spec.cliPath },
-  }
-}
-
-/** Abandon a running installer. */
-export function stopMinimaxSetup(): void {
-  if (current !== undefined && current.finishedAt === undefined) current.child.kill()
-}
-
-/** A small object facade for callers that prefer a service shape. */
-export class MinimaxCliSetup {
-  readonly start = startMinimaxSetup
-  readonly status = readMinimaxSetupStatus
-  readonly stop = stopMinimaxSetup
 }

@@ -27,7 +27,8 @@ import type { CodeBuddySavedUser } from '../../infra/codebuddy-state.ts'
 import { jsonSchemaToShape } from '../../core/jsonschema.ts'
 import type { Live } from '../../core/live.ts'
 import { readLive } from '../../core/live.ts'
-import { stripMcpNamespace } from '../../core/mcp-naming.ts'
+import { bareHostToolName, isHostToolName } from '../../core/mcp-naming.ts'
+import { inertInput, withTimeout } from '../../core/async.ts'
 import { codeBuddyEnvironment, loadCodeBuddySdk } from '../../infra/sdk.ts'
 
 /**
@@ -97,22 +98,15 @@ type SessionImpl = ReturnType<typeof import('@tencent-ai/agent-sdk').unstable_v2
  */
 const CODEBUDDY_MCP_SERVER_KEY = 'dsh_host'
 
-const MCP_TOOL_PREFIX = `mcp__${CODEBUDDY_MCP_SERVER_KEY}__`
 /**
- * The hyphenated spelling, kept for names already in flight.
+ * Whether a CLI tool name belongs to this plugin's MCP server.
  *
- * The server used to be keyed `dsh-host`; older prefixes and doubled forms can
- * still carry `mcp__dsh-host__<tool>`, and both spellings name the same
- * server, so the matcher accepts them all. See {@link CODEBUDDY_MCP_SERVER_KEY}
- * for why the registered key itself is now the normalised spelling.
+ * Both spellings count: the key above is the normalised one this plugin now
+ * registers, while a name already in flight can still carry the hyphenated
+ * form the server used to be keyed under. See {@link mcpToolPrefixes}.
  */
-const MCP_TOOL_PREFIX_SANITIZED = `mcp__${MCP_SERVER_NAME}__`
-/** Both spellings, in the order the shared stripper tries them. */
-const HOST_TOOL_PREFIXES = [MCP_TOOL_PREFIX, MCP_TOOL_PREFIX_SANITIZED]
-
-/** Whether a CLI tool name belongs to this plugin's MCP server. */
 export function isHostTool(toolName: string): boolean {
-  return stripMcpNamespace(toolName, HOST_TOOL_PREFIXES) !== null
+  return isHostToolName(toolName, MCP_SERVER_NAME)
 }
 
 /**
@@ -126,7 +120,7 @@ export function isHostTool(toolName: string): boolean {
  * the current tool set`. See {@link stripMcpNamespace}.
  */
 export function hostToolName(toolName: string): string {
-  return stripMcpNamespace(toolName, HOST_TOOL_PREFIXES) ?? toolName
+  return bareHostToolName(toolName, MCP_SERVER_NAME)
 }
 
 /** One model as the settings page and the adapter see it. */
@@ -353,21 +347,11 @@ async function withSession<T>(
     persistSession: false,
   })
   try {
-    await withTimeout(session.connect(), timeoutMs)
-    return await withTimeout(run(session), timeoutMs)
+    await withTimeout(session.connect(), timeoutMs, 'CodeBuddy request')
+    return await withTimeout(run(session), timeoutMs, 'CodeBuddy request')
   } finally {
     session.close()
   }
-}
-
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => { reject(new Error(`CodeBuddy request timed out after ${ms}ms`)) }, ms)
-    promise.then(
-      value => { clearTimeout(timer); resolve(value) },
-      error => { clearTimeout(timer); reject(error) },
-    )
-  })
 }
 
 /**
@@ -544,18 +528,13 @@ async function readAccount(region: CodeBuddyRegion, timeoutMs: number): Promise<
     },
   })
   try {
-    await withTimeout(q.connect(), timeoutMs)
+    await withTimeout(q.connect(), timeoutMs, 'CodeBuddy request')
     // The CLI's answer carries a bearer token beside the identity; it goes on
     // to the settings page through `/usage`, so the credential comes off here.
-    return withoutCredential(await withTimeout(q.accountInfo(), timeoutMs)) ?? {}
+    return withoutCredential(await withTimeout(q.accountInfo(), timeoutMs, 'CodeBuddy request')) ?? {}
   } finally {
     await q.return().catch(() => undefined)
   }
-}
-
-/** Streaming prompt that never yields, so no model turn runs. */
-async function* inertInput(): AsyncGenerator<never> {
-  await new Promise<never>(() => {})
 }
 
 /** Turn a raw SDK failure into a sentence the settings page can act on. */
@@ -679,7 +658,7 @@ async function readBearerToken(region: CodeBuddyRegion): Promise<string> {
     onAuthUrl: () => {
       // A quota read must never pop a browser; the page owns login.
     },
-  }), 6000)
+  }), 6000, 'CodeBuddy authenticate')
   rememberBearerToken(region, result.userinfo.token, {
     userId: result.userinfo.userId,
     userName: result.userinfo.userName,
@@ -849,6 +828,7 @@ export class CodeBuddyAuth {
       await withTimeout(
         sdk.unstable_v2_logout({ environment: codeBuddyEnvironment(region), env: cliDirEnv(region) }),
         CODEBUDDY_FETCH_TIMEOUT_MS,
+        'CodeBuddy logout',
       )
     } catch (error) {
       failure = error instanceof Error ? error.message : String(error)
@@ -881,6 +861,7 @@ export class CodeBuddyAuth {
       await withTimeout(
         sdk.unstable_v2_logout({ environment: codeBuddyEnvironment(region), env: cliDirEnv(region) }),
         LOGOUT_TIMEOUT_MS,
+        'CodeBuddy logout',
       ).catch(() => undefined)
       if (!this.current(run)) return
       bearerTokens.delete(region)

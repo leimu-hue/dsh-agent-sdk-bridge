@@ -27,7 +27,7 @@ import { cachedModels } from '../../core/model-cache.ts'
 import { feedImageRefs, feedToText, imageRefText, imageRefs, renderInitialFeed, renderSideChannelFeed } from '../../core/render.ts'
 import type { Feed, ImagePathResolver } from '../../core/render.ts'
 import { QoderSession, QoderSessionManager, DEFAULT_MAX_SESSIONS } from './session.ts'
-import { planContinuation, reasoningInfo } from '../../core/adapter-kit.ts'
+import { planContinuation, reasoningInfo, resolveImages, resolveTurnImages } from '../../core/adapter-kit.ts'
 import type { ImageRequestReader } from '../../core/adapter-kit.ts'
 import type { ChannelContent, ResolvedImages } from '../../core/host-session.ts'
 import type { SessionModelPolicy } from './session.ts'
@@ -628,7 +628,7 @@ export class QoderAdapter extends LlmAdapter {
     session.fedMessages = options.messages
     session.fedSystem = options.system
     const feed = renderInitialFeed(options.system, options.messages, this.imagePath)
-    const images = await this.resolveImages(feedImageRefs(feed), vision, options.signal)
+    const images = await resolveImages(feedImageRefs(feed), vision, this.readImage, options.signal)
     yield* session.stream(options, await this.buildFeed(feed, vision, images), feedToText(feed, this.imagePath))
   }
 
@@ -638,31 +638,7 @@ export class QoderAdapter extends LlmAdapter {
     vision: boolean,
     signal?: AbortSignal,
   ): Promise<ResolvedImages> {
-    const refs = tail.flatMap(message => message.role === 'assistant' ? [] : imageRefs(message.content))
-    return this.resolveImages(refs, vision, signal)
-  }
-
-  /** Resolve image references into base64 request bytes; absent reader → none. */
-  private async resolveImages(
-    refs: readonly ImageAttachmentRef[],
-    vision: boolean,
-    signal?: AbortSignal,
-  ): Promise<ResolvedImages> {
-    const map = new Map<string, { data: string, mediaType: string }>()
-    if (!vision || this.readImage === undefined || refs.length === 0) return map
-    for (const ref of refs) {
-      const key = String(ref.attachmentId)
-      if (map.has(key)) continue
-      try {
-        const image = await this.readImage(ref, signal)
-        if (image !== undefined) {
-          map.set(key, { data: Buffer.from(image.bytes).toString('base64'), mediaType: image.mediaType })
-        }
-      } catch {
-        // One unreadable attachment degrades to handle text; the turn continues.
-      }
-    }
-    return map
+    return await resolveTurnImages(tail, vision, this.readImage, signal)
   }
 
   /**

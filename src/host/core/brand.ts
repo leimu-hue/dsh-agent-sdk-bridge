@@ -46,8 +46,6 @@ export interface BrandProfile {
   cliCommands: readonly string[]
   /** Per-user state directory, relative to the home directory. */
   configDirName: string
-  /** Setup helper shipped under `scripts/`, or null when login is in-process. */
-  setupScript: string | null
   /** Whether the static Qoder catalog is a valid fallback. */
   staticCatalog: boolean
 }
@@ -63,7 +61,6 @@ export const CN_BRAND: BrandProfile = {
   cliPackages: [{ scope: '@qodercn-ai', name: 'qoderclicn' }],
   cliCommands: ['qoderclicn', 'qodercn'],
   configDirName: '.qoder-cn',
-  setupScript: 'setup-qoderclicn.bat',
   staticCatalog: true,
 }
 
@@ -84,7 +81,6 @@ export const GLOBAL_BRAND: BrandProfile = {
   cliPackages: [{ scope: '@qoder-ai', name: 'qodercli' }],
   cliCommands: ['qodercli', 'qoder'],
   configDirName: '.qoder',
-  setupScript: 'setup-qodercli.bat',
   staticCatalog: false,
 }
 
@@ -106,7 +102,6 @@ export const CODEBUDDY_BRAND: BrandProfile = {
   cliPackages: [{ scope: '@tencent-ai', name: 'codebuddy-code' }],
   cliCommands: ['codebuddy', 'cbc'],
   configDirName: '.codebuddy',
-  setupScript: null,
   staticCatalog: false,
 }
 
@@ -128,7 +123,6 @@ export const MINIMAX_BRAND: BrandProfile = {
   cliPackages: [{ scope: '@minimax-ai', name: 'code' }],
   cliCommands: ['mcode'],
   configDirName: '.minimax',
-  setupScript: null,
   staticCatalog: false,
 }
 

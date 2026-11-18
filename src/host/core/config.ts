@@ -315,10 +315,9 @@ export type LiveConfig = { readonly [K in keyof ResolvedConfig]: () => ResolvedC
 /**
  * Wrap a parsed config as {@link LiveConfig}.
  *
- * Every normalizer {@link resolveConfig} applies is applied here too — the live
- * wrapper is the same interpretation of the same raw fields, just deferred —
- * and `resolveConfig` is implemented on top of it, so the two can never
- * disagree about what a given input means.
+ * Every normalizer below is the single interpretation of a raw field: the
+ * running plugin reads its config only through this view, so a value can never
+ * be resolved one way at mount and another way later.
  *
  * @param config - the parsed plugin config, possibly partial or absent.
  * @returns one thunk per resolved field, each reading the live cell.
@@ -377,57 +376,6 @@ export function liveConfig(config: ParsedConfig | undefined): LiveConfig {
     minimaxGlobalModelContextWindows: () => numberMap(field('minimaxGlobalModelContextWindows')),
     minimaxCnModelContextWindows: () => numberMap(field('minimaxCnModelContextWindows')),
     minimaxModelAliases: () => stringMap(field('minimaxModelAliases')),
-  }
-}
-
-/**
- * Apply defaults to a parsed config.
- *
- * A one-shot snapshot of {@link liveConfig}, for a caller that genuinely wants
- * the values as they are right now (a report, a test) rather than a view that
- * keeps following edits. The running plugin does not use it: every option it
- * hands downstream is a thunk, so a volatile edit is never missed.
- *
- * @param config - the parsed plugin config, possibly partial.
- * @returns the same values with every default filled in.
- */
-export function resolveConfig(config: ParsedConfig | undefined): ResolvedConfig {
-  const live = liveConfig(config)
-  return {
-    cnEnabled: live.cnEnabled(),
-    intlEnabled: live.intlEnabled(),
-    codebuddyEnabled: live.codebuddyEnabled(),
-    codebuddyRegion: live.codebuddyRegion(),
-    displayName: live.displayName(),
-    maxSessions: live.maxSessions(),
-    modelCacheTtlMs: live.modelCacheTtlMs(),
-    defaultMaxTokens: live.defaultMaxTokens(),
-    toolResultTimeoutMs: live.toolResultTimeoutMs(),
-    catalogFetchTimeoutMs: live.catalogFetchTimeoutMs(),
-    abortGraceMs: live.abortGraceMs(),
-    coldMaxTurns: live.coldMaxTurns(),
-    disabledModels: live.disabledModels(),
-    modelContextWindows: live.modelContextWindows(),
-    modelAliases: live.modelAliases(),
-    defaultReasoningEffort: live.defaultReasoningEffort(),
-    intlDisplayName: live.intlDisplayName(),
-    intlDisabledModels: live.intlDisabledModels(),
-    intlModelContextWindows: live.intlModelContextWindows(),
-    intlModelAliases: live.intlModelAliases(),
-    codebuddyDisplayName: live.codebuddyDisplayName(),
-    codebuddyGlobalDisabledModels: live.codebuddyGlobalDisabledModels(),
-    codebuddyCnDisabledModels: live.codebuddyCnDisabledModels(),
-    codebuddyGlobalModelContextWindows: live.codebuddyGlobalModelContextWindows(),
-    codebuddyCnModelContextWindows: live.codebuddyCnModelContextWindows(),
-    codebuddyModelAliases: live.codebuddyModelAliases(),
-    minimaxEnabled: live.minimaxEnabled(),
-    minimaxRegion: live.minimaxRegion(),
-    minimaxDisplayName: live.minimaxDisplayName(),
-    minimaxGlobalDisabledModels: live.minimaxGlobalDisabledModels(),
-    minimaxCnDisabledModels: live.minimaxCnDisabledModels(),
-    minimaxGlobalModelContextWindows: live.minimaxGlobalModelContextWindows(),
-    minimaxCnModelContextWindows: live.minimaxCnModelContextWindows(),
-    minimaxModelAliases: live.minimaxModelAliases(),
   }
 }
 

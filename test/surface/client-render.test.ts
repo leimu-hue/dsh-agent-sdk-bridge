@@ -132,7 +132,7 @@ describe('account cards', () => {
       account: { name: 'dev', subscriptionType: 'Pro' },
       at: 1_800_000_000_000,
     })
-    const html = render(UsageCard, { t, brand: CN, refreshSignal: 0, resetSignal: 0 })
+    const html = render(UsageCard, { t, brand: CN, refreshSignal: 0 })
     expect(html).toContain('Pro')
     expect(html).toContain('10 / 100')
     expect(html).toContain('role="progressbar"')

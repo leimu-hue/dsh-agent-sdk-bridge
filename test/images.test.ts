@@ -17,6 +17,7 @@ import { QoderAdapter } from '../src/host/providers/qoder/adapter.ts'
 import { feedToText, imageRefText, renderInitialFeed } from '../src/host/core/render.ts'
 import { MinimaxAdapter } from '../src/host/providers/minimax/adapter.ts'
 import { renderToolResult } from '../src/host/providers/minimax/session.ts'
+import { resolveTurnImages } from '../src/host/core/adapter-kit.ts'
 
 const REF: ImageAttachmentRef = {
   attachmentId: AttachmentId('sha256:2b081468d33313d546912d12c2f5c6f2b352547ff871f3c939fc357dd096194a'),
@@ -64,13 +65,15 @@ describe('tool-result images', () => {
     const tail = [{ role: 'tool', toolCallId: 'c1', content: [{ type: 'image', attachment: REF }] }] as never
     const reader = async () => ({ bytes: Buffer.from('ABC'), mediaType: 'image/png' as const })
 
-    const codebuddy = new CodeBuddyAdapter({ readImage: reader })
-    const cbImages = await (codebuddy as any).resolveTurnImages(tail, true)
-    expect(cbImages.get(String(REF.attachmentId))).toEqual({ data: 'QUJD', mediaType: 'image/png' })
+    // Every adapter feeds its own `readImage` option into this one helper, so
+    // the tail rule only has to be pinned here.
+    const images = await resolveTurnImages(tail, true, reader)
+    expect(images.get(String(REF.attachmentId))).toEqual({ data: 'QUJD', mediaType: 'image/png' })
 
-    const minimax = new MinimaxAdapter({ readImage: reader })
-    const mmImages = await (minimax as any).resolveTurnImages(tail, true)
-    expect(mmImages.get(String(REF.attachmentId))).toEqual({ data: 'QUJD', mediaType: 'image/png' })
+    // A route that cannot read images sends no pixels at all.
+    expect(await resolveTurnImages(tail, false, reader)).toEqual(new Map())
+    // So does a deployment with no attachment store.
+    expect(await resolveTurnImages(tail, true, undefined)).toEqual(new Map())
   })
 })
 

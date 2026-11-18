@@ -31,7 +31,13 @@ export interface Brand {
   navKey: CopyKey
   introKey: CopyKey
   noModelsKey: CopyKey
-  /** Present on the Qoder editions, which own a CLI helper group. */
+  /**
+   * The CLI section this edition renders under its title, if it has one.
+   *
+   * The page only *reports* on that CLI; installing and signing in stay with
+   * the user, because install commands change and a copy baked into this
+   * bundle would go stale.
+   */
   cliGroupKey?: CopyKey
   cliHintKey?: CopyKey
   fields: {
@@ -173,20 +179,6 @@ export interface MinimaxUsagePayload {
   plan?: { kind?: 'token-plan' | 'credits' | 'free'; name?: string; hasTokenPlan?: boolean; expiresAt?: number }
   credits?: { remaining?: number; purchasedRemaining?: number; freeRemaining?: number }
   windows?: MinimaxQuotaWindow[]
-}
-
-/** `GET/POST /setup` answer, shared by the Qoder helper and MiniMax's CLI. */
-export interface SetupStatus {
-  running?: boolean
-  mode?: string
-  code?: number | null
-  lines?: string[]
-  installed?: boolean
-  cancelled?: boolean
-  finishedAt?: number
-  versionMismatch?: boolean
-  cliVersion?: string
-  requiredCliVersion?: string
 }
 
 /** A config form snapshot, as the host's settings service reports it. */

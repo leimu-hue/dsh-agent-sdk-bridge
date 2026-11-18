@@ -78,7 +78,16 @@ describe('MCP tools capability', () => {
     } catch {
       accepted = false
     }
-    const listed = (await client.listTools()).tools.map(tool => tool.name)
+    // An accepted late registration must be listed; a refused one must stay
+    // invisible. `listTools()` itself may fail outright, because a server that
+    // never declared the capability does not install a `tools/list` handler —
+    // that failure *is* "not listed", not an error this test should surface.
+    let listed: string[] = []
+    try {
+      listed = (await client.listTools()).tools.map(tool => tool.name)
+    } catch {
+      listed = []
+    }
     expect(listed).toEqual(accepted ? ['ops_bash'] : [])
     await client.close()
   })

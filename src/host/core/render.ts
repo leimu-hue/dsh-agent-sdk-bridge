@@ -59,7 +59,7 @@ export function imageRefs(blocks: readonly ContentBlock[]): ImageAttachmentRef[]
 }
 
 /** Render one content-block list as plain text; non-text blocks get handles. */
-export function renderBlocks(blocks: readonly ContentBlock[], imagePath?: ImagePathResolver): string {
+function renderBlocks(blocks: readonly ContentBlock[], imagePath?: ImagePathResolver): string {
   const parts: string[] = []
   for (const block of blocks) {
     switch (block.type) {
@@ -91,7 +91,7 @@ function roleTag(message: RequestMessage): string {
  * Render one request message with its role tag. A request-only user input has
  * no durable identity or source, so it reads exactly like a user message.
  */
-export function renderMessage(message: RequestMessage, imagePath?: ImagePathResolver): string {
+function renderMessage(message: RequestMessage, imagePath?: ImagePathResolver): string {
   return `[${roleTag(message)}] ${renderBlocks(message.content, imagePath)}`
 }
 
@@ -147,7 +147,7 @@ export function joinFeeds(sections: readonly Feed[]): Feed {
 }
 
 /** Render a block list as parts, keeping image occurrences as their references. */
-export function blockParts(blocks: readonly ContentBlock[]): FeedPart[] {
+function blockParts(blocks: readonly ContentBlock[]): FeedPart[] {
   const parts: FeedPart[] = []
   let pending: string[] = []
   const flush = (): void => {
@@ -334,10 +334,5 @@ export function renderUserTurn(blocks: readonly ContentBlock[]): Feed {
 /** Render an in-place-updated message (runtime-context snapshots and the like). */
 export function renderRefreshed(message: RequestMessage): Feed {
   return `${renderMessage(message)}\n（宿主原位刷新了这条消息）`
-}
-
-/** Render a host system-prompt update mid-session. */
-export function renderSystemUpdate(system: string): string {
-  return `[系统提示(更新)] ${system}`
 }
 

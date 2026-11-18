@@ -1,12 +1,11 @@
 /**
- * MiniMax Code's account card: login region, CLI install state, browser login
- * and the plan's quota windows.
+ * MiniMax Code's account card: login region, CLI presence, browser login and
+ * the plan's quota windows.
  *
  * The login is a CLI process: `mcode login` opens the browser and writes an
  * auth file, so the card polls the host while that process runs and re-reads
- * the account when it finishes. The CLI itself is installed from here too —
- * the flags matter (npm 12 blocks the install script the package needs), which
- * is why the page runs the host's helper instead of telling the user a command.
+ * the account when it finishes. Installing that CLI is left to the user — the
+ * card only reports whether this machine has it.
  *
  * @module dsh-agent-sdk-bridge/client/components/minimax-card
  */
@@ -19,7 +18,7 @@ import { creditsOf, dateLabel, timeLabel, tokenExpiryText } from '../format.ts'
 import { minimaxSnapshot, rememberMinimax } from '../snapshots.ts'
 import { CLASS, css } from '../styles.ts'
 import type {
-  AuthStatus, Brand, ConfigSnapshot, MinimaxUsagePayload, PluginContext, Region, SetupStatus, Translate,
+  AuthStatus, Brand, ConfigSnapshot, MinimaxUsagePayload, PluginContext, Region, Translate,
 } from '../types.ts'
 import {
   ConfirmButton, ExternalLink, LiveAlert, LiveStatus, Meter, useInstanceId,
@@ -30,7 +29,7 @@ export interface MinimaxCardProps {
   t: Translate
   ctx: PluginContext
   brand: Brand
-  /** Bumped after a CLI install or uninstall. */
+  /** Bumped when the page asks every card to re-read. */
   refreshSignal: number
   /** Called whenever the sign-in state is known to have changed. */
   onAuthChange?: (signedIn: boolean) => void
@@ -55,8 +54,6 @@ export function MinimaxCard({
   const initial = minimaxSnapshot(configuredRegion)
   const [auth, setAuth] = useState<AuthStatus | undefined>(initial?.auth)
   const [usage, setUsage] = useState<MinimaxUsagePayload | undefined>(initial?.usage)
-  const [setup, setSetup] = useState<SetupStatus | undefined>(undefined)
-  const [showLog, setShowLog] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
   const lastRunning = useRef(false)
@@ -70,11 +67,9 @@ export function MinimaxCard({
    */
   const lastUsageRegion = useRef<Region>(configuredRegion)
   const regionSelectId = useInstanceId('dssb-minimax-region')
-  const logId = useInstanceId('dssb-minimax-log')
   const signingIn = auth?.running === true
   const signedIn = auth?.signedIn === true
-  const runningSetup = setup?.running === true
-  const installed = setup?.installed === true || usage?.installed === true
+  const installed = usage?.installed === true
 
   const applySnapshot = useCallback((target: Region) => {
     const cached = minimaxSnapshot(target)
@@ -120,14 +115,6 @@ export function MinimaxCard({
     }
   }, [loadUsage, onAuthChange])
 
-  const pollSetup = useCallback(async () => {
-    try {
-      setSetup(await api<SetupStatus>('/setup?brand=minimax', { timeout: 10_000 }))
-    } catch {
-      /* a host without the installer route leaves this group empty */
-    }
-  }, [])
-
   useEffect(() => {
     regionRef.current = region
     applySnapshot(region)
@@ -138,8 +125,7 @@ export function MinimaxCard({
     // `fresh` drops both the 60s account cache and the region-access verdict,
     // so a switch always re-probes the network before deciding.
     void loadUsage(switched, region)
-    void pollSetup()
-  }, [region, refreshSignal, applySnapshot, loadUsage, pollAuth, pollSetup])
+  }, [region, refreshSignal, applySnapshot, loadUsage, pollAuth])
 
   useEffect(() => {
     if (configuredRegion === regionRef.current) return
@@ -153,16 +139,6 @@ export function MinimaxCard({
     const timer = setInterval(() => { void pollAuth(region) }, 1500)
     return () => clearInterval(timer)
   }, [signingIn, pollAuth, region])
-
-  useEffect(() => {
-    if (!runningSetup) return undefined
-    const timer = setInterval(() => { void pollSetup() }, 1200)
-    return () => clearInterval(timer)
-  }, [runningSetup, pollSetup])
-
-  useEffect(() => {
-    if (!runningSetup && setup?.code === 0) void pollAuth(region)
-  }, [runningSetup, setup?.code, pollAuth, region])
 
   const authResolved = auth !== undefined
   useEffect(() => {
@@ -240,26 +216,6 @@ export function MinimaxCard({
     }
   }, [onAuthChange, t])
 
-  const runSetup = useCallback(async (mode: string) => {
-    setBusy(true)
-    setError(undefined)
-    setShowLog(true)
-    try {
-      setSetup(await api<SetupStatus>('/setup', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ brand: 'minimax', mode }),
-        timeout: 15_000,
-      }))
-    } catch (caught) {
-      setError(`${t('minimaxCliFailed')}：${String((caught as Error | undefined)?.message ?? caught)}`)
-    } finally {
-      setBusy(false)
-    }
-  }, [t])
-
-  const lines = Array.isArray(setup?.lines) ? setup.lines : []
-  const setupBusy = busy || runningSetup
   const account = usage?.account
   const plan = usage?.plan
   const credits = usage?.credits
@@ -455,49 +411,8 @@ export function MinimaxCard({
         <div style={css.usageLine}>
           <span style={css.usageLabel}>{t('minimaxCliGroup')}</span>
           <span style={css.usageValue}>{installed ? t('minimaxCliInstalled') : t('minimaxCliMissing')}</span>
-          <button
-            type="button"
-            className={CLASS.button}
-            style={{ ...css.btn, marginLeft: 'auto' }}
-            disabled={setupBusy}
-            onClick={() => void runSetup('install')}
-          >
-            {runningSetup && setup?.mode === 'install' ? t('minimaxCliInstalling') : t('minimaxCliInstall')}
-          </button>
-          {installed
-            ? (
-                <ConfirmButton
-                  label={t('minimaxCliUninstall')}
-                  question={t('minimaxConfirmUninstall')}
-                  confirmLabel={t('confirmYes')}
-                  cancelLabel={t('confirmCancel')}
-                  disabled={setupBusy}
-                  alert
-                  onConfirm={() => void runSetup('uninstall')}
-                />
-              )
-            : null}
         </div>
         <div style={css.note}>{t('minimaxCliHint')}</div>
-        {lines.length === 0
-          ? null
-          : (
-              <div>
-                <button
-                  type="button"
-                  className={CLASS.button}
-                  style={css.btn}
-                  aria-expanded={showLog}
-                  aria-controls={logId}
-                  onClick={() => setShowLog(value => !value)}
-                >
-                  {showLog ? t('minimaxHideOutput') : t('minimaxShowOutput')}
-                </button>
-                {showLog
-                  ? <pre id={logId} className={CLASS.log} style={css.log} aria-label={t('cliLogLabel')}>{lines.join('\n')}</pre>
-                  : null}
-              </div>
-            )}
       </div>
 
       {error !== undefined ? <LiveAlert>{error}</LiveAlert> : null}

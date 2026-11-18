@@ -9,8 +9,8 @@
  * The card is stale-while-revalidate: the last reading paints immediately and
  * a fresh one replaces it. A failed read keeps the old numbers and says they
  * are old rather than replacing them with an empty card — except when the CLI
- * is gone or the user signed out, where the stored numbers describe a machine
- * state that no longer exists and are dropped.
+ * is gone, where the stored numbers describe a machine state that no longer
+ * exists and are dropped.
  *
  * @module dsh-agent-sdk-bridge/client/components/usage-card
  */
@@ -29,23 +29,18 @@ import { ExternalLink, LiveAlert, LiveStatus } from './primitives.tsx'
 export interface UsageCardProps {
   t: Translate
   brand: Brand
-  /** Bumped after a CLI install or uninstall, both of which invalidate a reading. */
+  /** Bumped when the page needs the stored reading re-validated. */
   refreshSignal: number
-  /** Bumped after a successful sign-out, which invalidates the account itself. */
-  resetSignal: number
 }
 
 /** Account quota and usage, read through the CLI. */
-export function UsageCard({ t, brand, refreshSignal, resetSignal }: UsageCardProps): ReactElement {
+export function UsageCard({ t, brand, refreshSignal }: UsageCardProps): ReactElement {
   const [snapshot, setSnapshot] = useState<UsageSnapshot | undefined>(() => readCache<UsageSnapshot>(brand.id, 'usage'))
   const [failure, setFailure] = useState<string | undefined>(undefined)
   const [busy, setBusy] = useState(false)
   /** The CLI is not installed: show that, and never any cached numbers. */
   const [missing, setMissing] = useState(false)
-  /** The user just signed out from this page: no reading is expected. */
-  const [signedOut, setSignedOut] = useState(false)
   const ticket = useRef(0)
-  const lastReset = useRef(resetSignal)
 
   const load = useCallback(async (fresh = false) => {
     const mine = ++ticket.current
@@ -61,7 +56,6 @@ export function UsageCard({ t, brand, refreshSignal, resetSignal }: UsageCardPro
         clearCache(brand.id, 'usage')
         setSnapshot(undefined)
         setMissing(true)
-        setSignedOut(false)
         setFailure(String(payload.error ?? t('usageCliMissing')))
         return
       }
@@ -73,7 +67,6 @@ export function UsageCard({ t, brand, refreshSignal, resetSignal }: UsageCardPro
         return
       }
       setMissing(false)
-      setSignedOut(false)
       setSnapshot(payload)
       writeCache(brand.id, 'usage', payload)
     } catch (error) {
@@ -84,25 +77,9 @@ export function UsageCard({ t, brand, refreshSignal, resetSignal }: UsageCardPro
     }
   }, [brand.id, t])
 
-  // `refreshSignal` changes after a CLI install or uninstall, both of which
-  // make the cached account reading describe a machine state that is gone.
+  // `refreshSignal` changes when the account behind the reading may have
+  // changed, which is the one case where a cached reading is worth re-reading.
   useEffect(() => { void load() }, [load, refreshSignal])
-
-  // A sign-out makes the stored reading describe an account that is no longer
-  // signed in — the same lie the uninstall case told. `resetSignal` changes
-  // only for that action, so an ordinary refresh keeps its
-  // stale-while-revalidate behaviour.
-  useEffect(() => {
-    if (lastReset.current === resetSignal) return
-    lastReset.current = resetSignal
-    clearCache(brand.id, 'usage')
-    setSnapshot(undefined)
-    setMissing(false)
-    setFailure(undefined)
-    // Do not fetch: the CLI has just been signed out, so a read would only
-    // produce an authentication error that looks like a malfunction.
-    setSignedOut(true)
-  }, [resetSignal, brand.id])
 
   const usage = snapshot?.usage
   const account = snapshot?.account
@@ -141,11 +118,9 @@ export function UsageCard({ t, brand, refreshSignal, resetSignal }: UsageCardPro
          */}
         {missing
           ? <div style={css.note}>{error ?? t('usageCliMissing')}</div>
-          : signedOut
-            ? <div style={css.note}>{t('usageSignedOut')}</div>
-            : error === undefined
-              ? <LiveStatus>{t('usageLoading')}</LiveStatus>
-              : <LiveAlert>{`${t('usageUnavailable')}：${error}`}</LiveAlert>}
+          : error === undefined
+            ? <LiveStatus>{t('usageLoading')}</LiveStatus>
+            : <LiveAlert>{`${t('usageUnavailable')}：${error}`}</LiveAlert>}
         {error === undefined
           ? null
           : (

@@ -30,7 +30,6 @@ export const CLASS = {
   row: 'dssb-row',
   meter: 'dssb-meter',
   meterFill: 'dssb-meter-fill',
-  log: 'dssb-log',
   packToggle: 'dssb-pack-toggle',
   visuallyHidden: 'dssb-visually-hidden',
   tabular: 'dssb-tabular',
@@ -66,7 +65,6 @@ export const css = {
   group: { display: 'flex', flexDirection: 'column', gap: '10px', border: '1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.25))', borderRadius: '10px', padding: '14px 16px' },
   advLabel: { fontSize: '0.88em' },
   h3: { margin: 0, fontSize: '0.95em' },
-  log: { margin: '0', maxHeight: '240px', overflowY: 'auto', padding: '8px 10px', borderRadius: '8px', border: '1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.25))', background: 'var(--dsw-alias-bg-base, rgba(128,128,128,0.05))', fontFamily: 'ui-monospace, monospace', fontSize: '0.76em', lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
   usageCard: { display: 'flex', flexDirection: 'column', gap: '10px', padding: '14px 16px', borderRadius: '10px', border: '1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.25))', background: 'var(--dsw-alias-bg-base, rgba(128,128,128,0.03))' },
   usageHead: { display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' },
   progressOuter: { height: '8px', borderRadius: '999px', background: 'var(--dsw-alias-border-l2, rgba(128,128,128,0.22))', overflow: 'hidden' },
@@ -130,7 +128,6 @@ const RULES = `
 /* The catalog can run to hundreds of rows: keep the paint cost near the viewport. */
 .dssb-row { content-visibility: auto; contain-intrinsic-size: auto 58px; }
 .dssb-meter-fill { transition: width .25s ease; }
-.dssb-log { overscroll-behavior: contain; }
 .dssb-tabular { font-variant-numeric: tabular-nums; }
 .dssb-breakable { overflow-wrap: anywhere; min-width: 0; }
 .dssb-visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;

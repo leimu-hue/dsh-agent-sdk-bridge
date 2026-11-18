@@ -47,7 +47,6 @@
   "files": [
     "lib",
     "src",
-    "scripts",
     "cordis.patch.yml",
     "README.md",
     "LICENSE",

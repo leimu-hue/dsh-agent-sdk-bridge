@@ -5,12 +5,16 @@
  * fetched live from the provider, while the form only carries what the user
  * stored. So the host answers these JSON routes:
  *
- * - `GET <prefix>/models?brand=cn|global|codebuddy` — the account's models,
- *   each with its enabled state and the windows it may use.
+ * - `GET <prefix>/models?brand=cn|global|codebuddy|minimax` — the account's
+ *   models, each with its enabled state and the windows it may use.
  * - `GET <prefix>/usage?brand=...` — the account reading. Qoder returns quota;
  *   CodeBuddy returns the signed-in account (its SDK exposes no quota call).
- * - `GET/POST <prefix>/setup` — the Qoder CLI install/login/uninstall helper.
- * - `GET/POST <prefix>/auth` — CodeBuddy browser login/logout per region.
+ * - `GET/POST <prefix>/auth` — CodeBuddy and MiniMax browser login/logout.
+ *
+ * Installing a provider's CLI is deliberately absent: the flags, versions and
+ * postinstall scripts belong to each vendor and change with their releases, so
+ * the page reports what the machine is missing and leaves installing it to the
+ * user rather than pinning a command that will be wrong next month.
  *
  * Config writes deliberately do NOT come through here. The browser half holds
  * a revision-fenced form for this plugin's namespace (`ctx.configForms`), and
@@ -26,8 +30,6 @@ import type { MinimaxAdapter } from '../providers/minimax/adapter.ts'
 import type { BrandId, CodeBuddyRegion, MinimaxRegion } from '../core/brand.ts'
 import { isBrandId, isCodeBuddyRegion } from '../core/brand.ts'
 import { priceFactorOf } from '../providers/qoder/models.ts'
-import { cancelSetup, isSetupMode, readSetupStatus, startSetup } from '../infra/setup.ts'
-import { isMinimaxSetupMode, readMinimaxSetupStatus, startMinimaxSetup } from '../infra/minimax-cli.ts'
 
 /** Route prefix this plugin owns; the client resolves it relative to the page. */
 export const API_PREFIX = '/api/llm-qoder-cn'
@@ -342,88 +344,6 @@ export async function handleApi(
         send(res, 200, { brand: 'minimax', ...mm.authStatus(region) })
         return
       }
-    }
-
-    if (path === '/setup') {
-      if (method === 'GET') {
-        if (codebuddy !== undefined) {
-          send(res, 400, { error: 'CodeBuddy 不需要安装 CLI，请在页面中登录' })
-          return
-        }
-        if (minimax !== undefined) {
-          send(res, 200, readMinimaxSetupStatus())
-          return
-        }
-        send(res, 200, readSetupStatus(queryBrand as 'cn' | 'global'))
-        return
-      }
-      if (method === 'POST') {
-        let parsed: { brand?: unknown, mode?: unknown }
-        try {
-          parsed = ((await readJson(req)) ?? {}) as { brand?: unknown, mode?: unknown }
-        } catch (error) {
-          send(res, 400, { error: `请求体无法解析：${error instanceof Error ? error.message : String(error)}` })
-          return
-        }
-        // A POST selects its provider in the body; the query string may name
-        // none at all, which is why this cannot reuse the GET's brand.
-        const postBrand = brandFrom(parsed.brand)
-        if (postBrand === undefined) {
-          send(res, 400, { error: 'brand 只接受 cn、global、codebuddy 或 minimax' })
-          return
-        }
-        if (postBrand === 'codebuddy') {
-          send(res, 400, { error: 'CodeBuddy 不需要安装 CLI，请在页面中登录' })
-          return
-        }
-        if (postBrand === 'minimax') {
-          if (!isMinimaxSetupMode(parsed.mode)) {
-            send(res, 400, { error: 'mode 只接受 install 或 uninstall' })
-            return
-          }
-          const mm = adapters.minimax as MinimaxAdapter
-          const result = startMinimaxSetup(parsed.mode, code => {
-            if (code !== 0) return
-            mm.invalidateCatalog()
-            mm.invalidateUsage()
-          })
-          if (!result.started) {
-            send(res, result.reason === 'busy' ? 409 : 501, { error: result.error })
-            return
-          }
-          send(res, 200, readMinimaxSetupStatus())
-          return
-        }
-        if (parsed.mode === 'cancel') {
-          cancelSetup(postBrand)
-          send(res, 200, readSetupStatus(postBrand))
-          return
-        }
-        if (!isSetupMode(parsed.mode)) {
-          send(res, 400, { error: 'mode 只接受 configure、login、logout、uninstall 或 cancel' })
-          return
-        }
-        const qoder = adapters[postBrand] as QoderAdapter
-        const mode = parsed.mode
-        const result = startSetup(postBrand, mode, code => {
-          if (code !== 0) return
-          // The helper may have installed, signed in, signed out, or removed
-          // the CLI. Every one of those changes whose credentials are on disk,
-          // while the SDK daemon and warm sessions still hold the ones they
-          // loaded at start-up — a sign-in after switching accounts would keep
-          // answering as the account that just left until the process restart.
-          qoder.resetAccount()
-        })
-        if (!result.started) {
-          const status = result.reason === 'busy' ? 409 : result.reason === 'unsupported' ? 501 : 500
-          send(res, status, { error: result.error })
-          return
-        }
-        send(res, 200, readSetupStatus(postBrand))
-        return
-      }
-      send(res, 405, { error: '不支持的写入路径' })
-      return
     }
 
     send(res, method === 'GET' ? 404 : 405, { error: method === 'GET' ? 'not found' : '不支持的写入路径' })

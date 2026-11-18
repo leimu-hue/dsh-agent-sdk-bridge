@@ -1,5 +1,5 @@
 /**
- * The model table and the CLI helper, which every settings section renders.
+ * The model table, which every settings section renders.
  *
  * Each change posts through the host's revision-fenced config form and then
  * adopts the host's returned list, so the page shows what the adapter will
@@ -14,19 +14,19 @@
 import * as React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { ReactElement } from 'react'
-import { api, clearCache, readCache, withDeadline, writeCache, WRITE_TIMEOUT_MS } from '../api.ts'
+import { api, readCache, withDeadline, writeCache, WRITE_TIMEOUT_MS } from '../api.ts'
 import { ADVANCED } from '../brands.ts'
 import { priceSuffix, windowLabel } from '../format.ts'
 import { codeBuddySnapshot, minimaxSnapshot } from '../snapshots.ts'
 import { CLASS, css } from '../styles.ts'
 import type {
-  ConfigSnapshot, MinimaxUsagePayload, ModelList, ModelRow, Region, SetupStatus, SlotProps,
+  ConfigSnapshot, MinimaxUsagePayload, ModelList, ModelRow, Region, SlotProps,
 } from '../types.ts'
 import { useUrlFlag, useUrlText } from '../url-state.ts'
 import { AdvancedBlock } from './advanced-fields.tsx'
 import { CodeBuddyCard } from './codebuddy-card.tsx'
 import { MinimaxCard } from './minimax-card.tsx'
-import { ConfirmButton, LiveAlert, LiveStatus, useInstanceId } from './primitives.tsx'
+import { LiveAlert, LiveStatus, useInstanceId } from './primitives.tsx'
 import { UsageCard } from './usage-card.tsx'
 
 /** What a model row's window column chooses between. */
@@ -100,11 +100,7 @@ export function SettingsPage({ ctx, t, brand }: SlotProps): ReactElement {
   const [query, setQuery] = useUrlText('q', '')
   const [onlyEnabled, setOnlyEnabled] = useUrlFlag('only', false)
   const [showAdvanced, setShowAdvanced] = useUrlFlag('advanced', false)
-  const [logOpen, setLogOpen] = useUrlFlag('log', false)
   const [usageTick, setUsageTick] = useState(0)
-  // Bumped only by a successful sign-out: the quota card must drop its stored
-  // account rather than label it "last reading".
-  const [usageReset, setUsageReset] = useState(0)
   const ticket = useRef(0)
   /** Separate from `ticket`: `load()` bumps that one, so sharing it would make
    *  every write look stale the moment its own refresh landed. */
@@ -367,98 +363,6 @@ export function SettingsPage({ ctx, t, brand }: SlotProps): ReactElement {
     return write(fields.disabled, enabled ? [] : ids, list => list.every(model => model.enabled === enabled))
   }, [fields.disabled, models, write])
 
-  // ── CLI helper ────────────────────────────────────────────────────────────
-  // The host runs the script, so the page only asks and then reads what it
-  // printed. `setup` stays undefined-shaped until the first answer arrives: a
-  // host older than this route simply never answers, and the group still
-  // renders with both buttons working.
-  const [setup, setSetup] = useState<SetupStatus | undefined>(undefined)
-  const [setupError, setSetupError] = useState<string | undefined>(undefined)
-  const logRef = useRef<HTMLPreElement | null>(null)
-
-  const pollSetup = useCallback(async () => {
-    try {
-      setSetup(await api<SetupStatus>(`/setup?brand=${brand.id}`, { timeout: 10_000 }))
-    } catch {
-      /* no run to report, or a host without the route */
-    }
-  }, [brand.id])
-
-  const startCliSetup = useCallback(async (mode: string) => {
-    setSetupError(undefined)
-    try {
-      setSetup(await api<SetupStatus>('/setup', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ brand: brand.id, mode }),
-        timeout: 15_000,
-      }))
-    } catch (caught) {
-      setSetupError(`${t('cliStartFailed')}：${String((caught as Error | undefined)?.message ?? caught)}`)
-    }
-  }, [brand.id, t])
-
-  const setupRunning = setup?.running === true
-  const setupCode = setup !== undefined && setup.running === false ? setup.code : undefined
-  const setupFinishedAt = setup?.finishedAt
-  const setupLines = Array.isArray(setup?.lines) ? setup.lines : []
-  // `installed` is read from the host's own CLI lookup, so the button follows
-  // the machine rather than the last run: after an uninstall it reads false
-  // even though that run exited 0, and the page offers "install" again instead
-  // of a dead "uninstall". Until the first status arrives the old layout is
-  // kept, so opening the page does not flash an "install" button on a machine
-  // that already has the CLI.
-  const cliInstalled = setup === undefined ? true : setup.installed === true
-  const setupCancelled = setup?.cancelled === true
-
-  useEffect(() => { void pollSetup() }, [pollSetup])
-  useEffect(() => {
-    if (!setupRunning) return undefined
-    const timer = setInterval(() => { void pollSetup() }, 1200)
-    return () => clearInterval(timer)
-  }, [setupRunning, pollSetup])
-
-  /**
-   * The output panel follows the run, not the history: open while the script is
-   * alive, folded away one second after it ends. A finished run from before a
-   * reload is never re-expanded, because the panel starts closed.
-   */
-  useEffect(() => {
-    if (setupRunning) {
-      setLogOpen(true)
-      return undefined
-    }
-    if (setupFinishedAt === undefined) return undefined
-    const timer = setTimeout(() => setLogOpen(false), 1000)
-    return () => clearTimeout(timer)
-  }, [setupRunning, setupFinishedAt, setLogOpen])
-
-  // The catalog is read from the CLI, so a helper that just installed, signed
-  // into, or removed it changes what the list and quota should show — and the
-  // host has already dropped its cached answers for that case.
-  useEffect(() => {
-    if (setupCode !== 0) return
-    if (setup?.mode === 'logout') {
-      // Signing out invalidates the account itself, not just its freshness: the
-      // stored catalog and quota were read through credentials that no longer
-      // exist. Drop both instead of refetching — a read now would only fail
-      // with an authentication error that looks like a fault.
-      clearCache(brand.id, modelsKind)
-      setModels([])
-      setCatalogNotice(t('modelsSignedOut'))
-      setSignedIn(regional ? false : undefined)
-      setUsageReset(value => value + 1)
-      return
-    }
-    void load(true)
-    setUsageTick(value => value + 1)
-  }, [setupCode, setupFinishedAt, setup?.mode, load, brand.id, modelsKind, regional, t, setLogOpen])
-
-  useEffect(() => {
-    const node = logRef.current
-    if (node !== null) node.scrollTop = node.scrollHeight
-  }, [setupLines.length])
-
   const all = models ?? []
   const enabledTotal = all.filter(model => model.enabled).length
 
@@ -499,28 +403,15 @@ export function SettingsPage({ ctx, t, brand }: SlotProps): ReactElement {
       : null
 
   /**
-   * Red guidance for "no models", with the one action that can fix it.
+   * Red guidance for "no models".
    *
    * An empty list is almost always the machine, not the account: the CLI is
-   * missing or signed out, so the catalog has nothing to return. Pointing at
-   * the helper and offering to run it beats a grey sentence nobody reads.
+   * missing or signed out, so the catalog has nothing to return. This page
+   * says what the machine is missing; running the installer is not its job.
    */
   const guide = (
     <div style={css.guide}>
       <div style={css.guideText}>{t(brand.noModelsKey)}</div>
-      {brand.kind !== 'qoder'
-        ? null
-        : (
-            <button
-              type="button"
-              className={`${CLASS.button} ${CLASS.buttonAlert}`}
-              style={{ ...css.btn, ...css.btnAlert }}
-              disabled={setupRunning}
-              onClick={() => void startCliSetup('configure')}
-            >
-              {t('cliRun')}
-            </button>
-          )}
     </div>
   )
 
@@ -657,7 +548,7 @@ export function SettingsPage({ ctx, t, brand }: SlotProps): ReactElement {
     <div className={CLASS.page} style={css.page}>
       <h2 style={css.h2}>{t(brand.titleKey)}</h2>
       <p style={css.intro}>{t(brand.introKey)}</p>
-      {regional ? authCard : <UsageCard t={t} brand={brand} refreshSignal={usageTick} resetSignal={usageReset} />}
+      {regional ? authCard : <UsageCard t={t} brand={brand} refreshSignal={usageTick} />}
 
       {/* Search row: the field grows, the filter sits beside it. */}
       <div style={css.bar}>
@@ -727,138 +618,12 @@ export function SettingsPage({ ctx, t, brand }: SlotProps): ReactElement {
       <LiveAlert>{error}</LiveAlert>
       <LiveStatus>{error === undefined ? status : undefined}</LiveStatus>
 
-      {brand.kind !== 'qoder'
+      {brand.cliGroupKey === undefined || brand.cliHintKey === undefined
         ? null
         : (
             <div style={css.group}>
-              <h3 style={css.h3}>{t(brand.cliGroupKey ?? 'cliGroup')}</h3>
-              <div style={css.note}>{t(brand.cliHintKey ?? 'cliHint')}</div>
-              {/*
-               * The CLI moves on its own (`qodercli update`), so only a build
-               * older than the SDK's pin is reported: that is the one that
-               * fails every session with a bare exit code.
-               */}
-              {setup?.versionMismatch === true
-                ? (
-                    <LiveAlert style={{ marginTop: '6px' }}>
-                      {`${t('cliVersionMismatch')} ${setup.cliVersion ?? '?'} ${t('cliVersionMismatchTail')} ${setup.requiredCliVersion ?? '?'}`}
-                    </LiveAlert>
-                  )
-                : null}
-              <div style={css.actions}>
-                {/*
-                 * The primary action follows the machine: install when the CLI
-                 * is gone, configure/re-login when it is there.
-                 */}
-                <button
-                  type="button"
-                  className={CLASS.button}
-                  style={css.btn}
-                  disabled={setupRunning}
-                  onClick={() => void startCliSetup('configure')}
-                >
-                  {cliInstalled && setup?.versionMismatch !== true ? t('cliRun') : t('cliInstall')}
-                </button>
-                {cliInstalled
-                  ? (
-                      <button
-                        type="button"
-                        className={CLASS.button}
-                        style={css.btn}
-                        disabled={setupRunning}
-                        onClick={() => void startCliSetup('login')}
-                      >
-                        {t('cliLogin')}
-                      </button>
-                    )
-                  : null}
-                {cliInstalled
-                  ? (
-                      <ConfirmButton
-                        label={t('cliLogout')}
-                        question={t('cliLogoutConfirm')}
-                        confirmLabel={t('confirmYes')}
-                        cancelLabel={t('confirmCancel')}
-                        disabled={setupRunning}
-                        onConfirm={() => void startCliSetup('logout')}
-                      />
-                    )
-                  : null}
-                {cliInstalled
-                  ? (
-                      <ConfirmButton
-                        label={t('cliUninstall')}
-                        question={t('cliUninstallConfirm')}
-                        confirmLabel={t('confirmYes')}
-                        cancelLabel={t('confirmCancel')}
-                        disabled={setupRunning}
-                        alert
-                        onConfirm={() => void startCliSetup('uninstall')}
-                      />
-                    )
-                  : null}
-                {/*
-                 * The login step waits for a browser callback; closing that tab
-                 * used to leave this row spinning forever. Cancelling settles
-                 * the run so the buttons come back.
-                 */}
-                {setupRunning
-                  ? (
-                      <button
-                        type="button"
-                        className={`${CLASS.button} ${CLASS.buttonAlert}`}
-                        style={{ ...css.btn, ...css.btnAlert }}
-                        onClick={() => void startCliSetup('cancel')}
-                      >
-                        {t('cliCancel')}
-                      </button>
-                    )
-                  : null}
-                {setupLines.length > 0 && !setupRunning
-                  ? (
-                      <button
-                        type="button"
-                        className={CLASS.button}
-                        style={css.btn}
-                        aria-expanded={logOpen}
-                        aria-controls="dssb-cli-log"
-                        onClick={() => setLogOpen(!logOpen)}
-                      >
-                        {logOpen ? t('cliHideLog') : t('cliShowLog')}
-                      </button>
-                    )
-                  : null}
-              </div>
-              <LiveStatus>
-                {setupRunning
-                  ? (setup?.mode === 'uninstall'
-                      ? t('cliUninstalling')
-                      : setup?.mode === 'logout' ? t('cliLoggingOut') : t('cliRunning'))
-                  : setupError !== undefined
-                    ? setupError
-                    : setupCancelled
-                      ? t('cliCancelled')
-                      : setupCode === 0
-                        ? (setup?.mode === 'uninstall'
-                            ? t('cliUninstallOk')
-                            : setup?.mode === 'logout' ? t('cliLogoutOk') : t('cliExitOk'))
-                        : setupCode === undefined || setupCode === null
-                          ? null
-                          : `${t('cliExitFail')} ${setupCode}`}
-              </LiveStatus>
-              {logOpen && setupLines.length > 0
-                ? (
-                    <pre
-                      id="dssb-cli-log"
-                      ref={logRef}
-                      className={CLASS.log}
-                      style={css.log}
-                      aria-label={t('cliLogLabel')}
-                    >
-                      {setupLines.join('\n')}
-                    </pre>
-                  )
-                : null}
+              <h3 style={css.h3}>{t(brand.cliGroupKey)}</h3>
+              <div style={css.note}>{t(brand.cliHintKey)}</div>
             </div>
           )}
 
