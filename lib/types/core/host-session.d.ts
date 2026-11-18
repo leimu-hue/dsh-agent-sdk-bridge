@@ -183,11 +183,9 @@ export type QueueItem = {
 /**
  * Unbounded FIFO the consumer pushes into and the active turn pumps out.
  *
- * One implementation for the two shapes the backends need: an
- * `AsyncIterable` (Qoder, CodeBuddy pump it with `for await`) and a plain
- * `next()` read (MiniMax's ACP session, which races every read against the
- * turn's abort signal). Closing it releases a parked reader, so a session that
- * is torn down mid-turn never leaves one waiting.
+ * Both backends drain it as an `AsyncIterable` (Qoder and CodeBuddy pump it with
+ * `for await`). Closing it releases a parked reader, so a session that is torn
+ * down mid-turn never leaves one waiting.
  */
 export declare class TurnQueue<T = QueueItem> implements AsyncIterable<T> {
     private readonly items;
@@ -196,8 +194,6 @@ export declare class TurnQueue<T = QueueItem> implements AsyncIterable<T> {
     push(item: T): void;
     close(): void;
     [Symbol.asyncIterator](): AsyncIterator<T>;
-    /** The next item, or undefined once the queue is closed and drained. */
-    next(): Promise<T | undefined>;
     /** Whether the turn already ended; late pushes are dropped. */
     get isClosed(): boolean;
     private pump;
