@@ -12,11 +12,11 @@
 
 import type { CopyKey } from './copy.ts'
 
-/** The four settings sections this bundle contributes. */
-export type BrandId = 'cn' | 'global' | 'codebuddy' | 'minimax'
+/** The three settings sections this bundle contributes. */
+export type BrandId = 'cn' | 'global' | 'codebuddy'
 
 /** Which account card a section renders under its title. */
-export type BrandKind = 'qoder' | 'codebuddy' | 'minimax'
+export type BrandKind = 'qoder' | 'codebuddy'
 
 /** A login region. Qoder editions are separate sections instead of regions. */
 export type Region = 'cn' | 'global'
@@ -147,38 +147,13 @@ export interface CodeBuddyAccountPayload {
   error?: string
 }
 
-/** `GET /auth` answer for both regional providers. */
+/** `GET /auth` answer for a regional provider. */
 export interface AuthStatus {
   running?: boolean
   signedIn?: boolean
   region?: Region
   url?: string
   error?: string
-  /** MiniMax only: the OAuth access token's expiry, phrased as a countdown. */
-  expiresAt?: number
-}
-
-/** One Token Plan window on a MiniMax account. */
-export interface MinimaxQuotaWindow {
-  id: string
-  label: string
-  unlimited?: boolean
-  remainingPercent?: number
-  remainingCount?: number
-  totalCount?: number
-  resetAt?: number
-}
-
-/** `GET /usage?brand=minimax` answer. */
-export interface MinimaxUsagePayload {
-  installed?: boolean
-  signedIn?: boolean
-  regionBlocked?: boolean
-  error?: string
-  account?: { name?: string; email?: string }
-  plan?: { kind?: 'token-plan' | 'credits' | 'free'; name?: string; hasTokenPlan?: boolean; expiresAt?: number }
-  credits?: { remaining?: number; purchasedRemaining?: number; freeRemaining?: number }
-  windows?: MinimaxQuotaWindow[]
 }
 
 /** A config form snapshot, as the host's settings service reports it. */

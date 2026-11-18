@@ -178,23 +178,6 @@ export function packageSummary(packages: unknown): { count: number, total: numbe
 }
 
 /**
- * How long a short-lived credential still has, phrased as a countdown.
- *
- * The MiniMax CLI's OAuth access token lives about an hour and the CLI renews
- * it on its next call, so an absolute date is always "today" and reads like a
- * problem that does not exist. A countdown carries the information the date
- * pretended to give.
- */
-export function tokenExpiryText(t: Translate, ms: unknown, now = Date.now()): string {
-  const expiresAt = countOf(ms)
-  if (expiresAt === undefined || expiresAt <= 0) return t('minimaxTokenExpired')
-  const minutes = Math.round((expiresAt - now) / 60_000)
-  if (minutes <= 0) return t('minimaxTokenExpired')
-  if (minutes < 60) return t('minimaxTokenRemaining').replace('{n}', String(minutes))
-  return t('minimaxTokenRemainingHours').replace('{n}', String(Math.floor(minutes / 60)))
-}
-
-/**
  * The used/total reading one credit bucket is rendered from.
  *
  * The percentage is computed from the same numbers the row prints: an upstream

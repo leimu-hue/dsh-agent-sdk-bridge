@@ -2,7 +2,7 @@
  * dsh-agent-sdk-bridge — browser half.
  *
  * Contributes one top-level settings section per enabled provider (`qoder-cn`,
- * `qoder-intl`, `codebuddy`, `minimax`), each showing its account card and then
+ * `qoder-intl`, `codebuddy`), each showing its account card and then
  * the model list: every model the account exposes, with an on/off switch and a
  * context-window choice, plus a collapsed "advanced" area holding the scalars
  * worth reaching without editing YAML. The plugin manager's page for this
@@ -22,19 +22,10 @@
  */
 
 import * as React from 'react'
-import { readCache, writeCache } from './api.ts'
-import { ADVANCED, BRANDS } from './brands.ts'
+import { BRANDS } from './brands.ts'
 import { BundleSettings } from './components/bundle-settings.tsx'
-import { CodeBuddyCard } from './components/codebuddy-card.tsx'
-import { CreditMeter } from './components/credit-meter.tsx'
-import { MinimaxCard } from './components/minimax-card.tsx'
 import { SettingsPage } from './components/settings-page.tsx'
-import { UsageCard } from './components/usage-card.tsx'
 import { en, zh } from './copy.ts'
-import {
-  creditReading, creditUnit, creditsOf, dateLabel, neverExpires, packageSummary, priceSuffix,
-  tokenExpiryText, windowLabel,
-} from './format.ts'
 import { installStyles } from './styles.ts'
 import type { Brand, PluginContext } from './types.ts'
 
@@ -113,33 +104,4 @@ export function apply(ctx: PluginContext): void {
       live.clear()
     }
   }), 'llm-qoder-cn: pages')
-}
-
-/**
- * The pure surface this bundle is tested through.
- *
- * The two dictionaries must stay in step and the credit normalizers must agree
- * with the numbers they print; both are reachable here without a DOM.
- */
-export const __test = {
-  windowLabel,
-  priceSuffix,
-  ADVANCED,
-  BRANDS,
-  zh,
-  en,
-  SettingsPage,
-  BundleSettings,
-  UsageCard,
-  CodeBuddyCard,
-  CreditMeter,
-  creditReading,
-  creditUnit,
-  creditsOf,
-  neverExpires,
-  dateLabel,
-  tokenExpiryText,
-  packageSummary,
-  readCache,
-  writeCache,
 }

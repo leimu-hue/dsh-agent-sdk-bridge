@@ -12,7 +12,6 @@ import { describe, expect, it } from 'vitest'
 import { API_PREFIX, handleApi } from '../../src/host/surface/api.ts'
 import type { QoderAdapter } from '../../src/host/providers/qoder/adapter.ts'
 import type { CodeBuddyAdapter } from '../../src/host/providers/codebuddy/adapter.ts'
-import type { MinimaxAdapter } from '../../src/host/providers/minimax/adapter.ts'
 
 /** One live catalog entry the stubbed adapters report. */
 const ENTRY = {
@@ -43,7 +42,6 @@ const ADAPTERS = {
   cn: adapter('cn'),
   global: adapter('global'),
   codebuddy: codeBuddyAdapter(),
-  minimax: minimaxAdapter(),
 }
 
 /** CodeBuddy's catalog uses its own row shape, so it gets its own stub. */
@@ -65,28 +63,6 @@ function codeBuddyAdapter(): CodeBuddyAdapter {
     startLogin: () => ({ started: true }),
     logout: async () => ({ ok: true }),
   } as unknown as CodeBuddyAdapter
-}
-
-/** MiniMax's catalog carries its own reasoning flags and login region. */
-function minimaxAdapter(): MinimaxAdapter {
-  return {
-    describeCatalog: async (region?: string) => [{
-      id: region === 'cn' ? 'mm-cn-model' : 'mm-model',
-      name: region === 'cn' ? 'MiniMax CN' : 'MiniMax Global',
-      contextWindows: [512_000], defaultContextWindow: 512_000,
-      vision: true, reasoning: true, reasoningEfforts: ['default', 'high'],
-    }],
-    contextWindowFor: () => undefined,
-    isModelDisabled: () => false,
-    isSignedIn: () => true,
-    regionBlocked: () => false,
-    catalogError: () => undefined,
-    usageInfo: async (_fresh: boolean, region?: string) => ({ at: 1, region, installed: true }),
-    invalidateCatalog: () => {},
-    authStatus: (region: string) => ({ running: false, region, signedIn: true }),
-    startLogin: () => ({ started: true }),
-    logout: async () => ({ running: false, region: 'cn', signedIn: false }),
-  } as unknown as MinimaxAdapter
 }
 
 /** A request the handler can iterate for a POST body. */
@@ -230,90 +206,12 @@ describe('settings API brand routing', () => {
     expect(qoderAuth.status()).toBe(404)
   })
 
-  it('serves the MiniMax catalog and account, per login region', async () => {
-    const global = response()
-    await handleApi(request(`${API_PREFIX}/models?brand=minimax&region=global`), global.res, ADAPTERS)
-    expect(global.status()).toBe(200)
-    expect(global.body()).toMatchObject({ brand: 'minimax', signedIn: true, region: 'global' })
-    expect(global.body().models[0]).toMatchObject({
-      id: 'mm-model', vision: true, reasoning: true, defaultContextWindow: 512_000,
-    })
-
-    const cn = response()
-    await handleApi(request(`${API_PREFIX}/models?brand=minimax&region=cn`), cn.res, ADAPTERS)
-    expect(cn.body().region).toBe('cn')
-    expect(cn.body().models[0].id).toBe('mm-cn-model')
-
-    const bad = response()
-    await handleApi(request(`${API_PREFIX}/models?brand=minimax&region=ioa`), bad.res, ADAPTERS)
-    expect(bad.status()).toBe(400)
-
-    const account = response()
-    await handleApi(request(`${API_PREFIX}/usage?brand=minimax&region=cn`), account.res, ADAPTERS)
-    expect(account.body()).toMatchObject({ brand: 'minimax', region: 'cn', installed: true, signedIn: true })
-  })
-
-  it('does not read a MiniMax catalog while signed out', async () => {
-    const signedOut = { ...(ADAPTERS.minimax as unknown as Record<string, unknown>) }
-    signedOut.isSignedIn = () => false
-    signedOut.catalogError = () => '请先登录 MiniMax Code'
-    let catalogReads = 0
-    signedOut.describeCatalog = async () => { catalogReads++; return [] }
-    const r = response()
-    await handleApi(request(`${API_PREFIX}/models?brand=minimax&region=global`), r.res, {
-      ...ADAPTERS,
-      minimax: signedOut as unknown as MinimaxAdapter,
-    })
-    expect(r.status()).toBe(200)
-    expect(r.body()).toMatchObject({ brand: 'minimax', signedIn: false, models: [], notice: '请先登录 MiniMax Code' })
-    expect(catalogReads).toBe(0)
-  })
-
-  it('passes a blocked region through and offers no models', async () => {
-    const blocked = { ...(ADAPTERS.minimax as unknown as Record<string, unknown>) }
-    blocked.regionBlocked = () => true
-    blocked.catalogError = () => '本机 IP 不在 MiniMax 国际站的服务区域'
-    blocked.describeCatalog = async () => []
-    const r = response()
-    await handleApi(request(`${API_PREFIX}/models?brand=minimax&region=global`), r.res, {
-      ...ADAPTERS,
-      minimax: blocked as unknown as MinimaxAdapter,
-    })
-    expect(r.status()).toBe(200)
-    expect(r.body()).toMatchObject({
-      brand: 'minimax',
-      region: 'global',
-      signedIn: true,
-      regionBlocked: true,
-      models: [],
-      notice: expect.stringContaining('IP'),
-    })
-  })
-
-  it('starts and ends a MiniMax login per region', async () => {
-    const started = response()
-    await handleApi(request(`${API_PREFIX}/auth`, 'POST', { brand: 'minimax', region: 'cn', action: 'login' }), started.res, ADAPTERS)
-    expect(started.status()).toBe(200)
-    expect(started.body()).toMatchObject({ brand: 'minimax', region: 'cn', signedIn: true })
-
-    const status = response()
-    await handleApi(request(`${API_PREFIX}/auth?brand=minimax&region=global`), status.res, ADAPTERS)
-    expect(status.status()).toBe(200)
-    expect(status.body()).toMatchObject({ brand: 'minimax', region: 'global' })
-
-    const ended = response()
-    await handleApi(request(`${API_PREFIX}/auth`, 'POST', { brand: 'minimax', region: 'cn', action: 'logout' }), ended.res, ADAPTERS)
-    expect(ended.status()).toBe(200)
-    expect(ended.body()).toMatchObject({ brand: 'minimax', signedIn: false })
-  })
-
   it('offers no install route, for any provider', async () => {
     // Installing a vendor CLI is deliberately not this plugin's job: the flags
     // and versions move with each release, so the page only reports what the
     // machine is missing.
     for (const url of [
       `${API_PREFIX}/setup?brand=cn`,
-      `${API_PREFIX}/setup?brand=minimax`,
       `${API_PREFIX}/setup?brand=codebuddy`,
     ]) {
       const r = response()
@@ -330,6 +228,7 @@ describe('settings API brand routing', () => {
     for (const url of [
       `${API_PREFIX}/models?brand=qoder`,
       `${API_PREFIX}/usage?brand=CN`,
+      `${API_PREFIX}/models?brand=minimax`,
     ]) {
       const r = response()
       await handleApi(request(url), r.res, ADAPTERS)

@@ -28,7 +28,7 @@ export interface BundleSettingsProps {
   [key: string]: unknown
 }
 
-/** The four edition switches. */
+/** The three edition switches. */
 export function BundleSettings({ ctx, t, view }: BundleSettingsProps): ReactElement {
   const form = ctx.configForms!.get('llm-qoder-cn')
   const subscribe = useCallback((listener: () => void) => form.subscribe(listener), [form])
@@ -65,9 +65,7 @@ export function BundleSettings({ ctx, t, view }: BundleSettingsProps): ReactElem
   const labelOf = (brand: Brand): string => {
     const key = brand.id === 'cn'
       ? 'displayName'
-      : brand.id === 'global'
-        ? 'intlDisplayName'
-        : brand.id === 'minimax' ? 'minimaxDisplayName' : 'codebuddyDisplayName'
+      : brand.id === 'global' ? 'intlDisplayName' : 'codebuddyDisplayName'
     const fallback = t(brand.navKey)
     const stored = value[key]
     return typeof stored === 'string' && stored !== '' ? stored : fallback

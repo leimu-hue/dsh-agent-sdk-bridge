@@ -5,11 +5,11 @@
  * fetched live from the provider, while the form only carries what the user
  * stored. So the host answers these JSON routes:
  *
- * - `GET <prefix>/models?brand=cn|global|codebuddy|minimax` — the account's
+ * - `GET <prefix>/models?brand=cn|global|codebuddy` — the account's
  *   models, each with its enabled state and the windows it may use.
  * - `GET <prefix>/usage?brand=...` — the account reading. Qoder returns quota;
  *   CodeBuddy returns the signed-in account (its SDK exposes no quota call).
- * - `GET/POST <prefix>/auth` — CodeBuddy and MiniMax browser login/logout.
+ * - `GET/POST <prefix>/auth` — CodeBuddy browser login/logout.
  *
  * Installing a provider's CLI is deliberately absent: the flags, versions and
  * postinstall scripts belong to each vendor and change with their releases, so
@@ -26,8 +26,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { QoderAdapter } from '../providers/qoder/adapter.ts'
 import type { CodeBuddyAdapter } from '../providers/codebuddy/adapter.ts'
-import type { MinimaxAdapter } from '../providers/minimax/adapter.ts'
-import type { BrandId, CodeBuddyRegion, MinimaxRegion } from '../core/brand.ts'
+import type { BrandId, CodeBuddyRegion } from '../core/brand.ts'
 import { isBrandId, isCodeBuddyRegion } from '../core/brand.ts'
 import { priceFactorOf } from '../providers/qoder/models.ts'
 
@@ -50,14 +49,14 @@ export interface ModelRow {
   /**
    * Whether the provider accepts a context-budget choice for this model.
    *
-   * Absent (Qoder, MiniMax) means the ordinary menu applies. `false` means the
+   * Absent (Qoder) means the ordinary menu applies. `false` means the
    * window is fixed upstream, so the page shows the value without a selector.
    */
   contextWindowSelectable?: boolean
 }
 
 /** The adapters the API can reach, one per provider route. */
-export type AdapterMap = Readonly<Record<BrandId, QoderAdapter | CodeBuddyAdapter | MinimaxAdapter>>
+export type AdapterMap = Readonly<Record<BrandId, QoderAdapter | CodeBuddyAdapter>>
 
 /** Answer one request with JSON. */
 function send(res: ServerResponse, status: number, payload: unknown): void {
@@ -134,32 +133,6 @@ export async function buildCodeBuddyRows(
   })
 }
 
-/** Build model rows for the MiniMax adapter, for one login region. */
-export async function buildMinimaxRows(
-  adapter: MinimaxAdapter,
-  region?: MinimaxRegion,
-): Promise<ModelRow[]> {
-  const live = await adapter.describeCatalog(region)
-  return live.map(entry => {
-    const override = adapter.contextWindowFor(entry.id, region)
-    const choices = new Set<number>(entry.contextWindows)
-    choices.add(entry.defaultContextWindow)
-    if (override !== undefined) choices.add(override)
-    return {
-      id: entry.id,
-      name: entry.name,
-      ...entry.description === undefined ? {} : { description: entry.description },
-      enabled: !adapter.isModelDisabled(entry.id, region),
-      vision: entry.vision,
-      contextWindow: override ?? entry.defaultContextWindow,
-      contextWindows: [...choices].sort((a, b) => a - b),
-      defaultContextWindow: entry.defaultContextWindow,
-      ...override === undefined ? {} : { override },
-      reasoning: entry.reasoning,
-    }
-  })
-}
-
 /** Largest request body this route accepts. */
 const MAX_BODY_BYTES = 2048
 
@@ -203,38 +176,31 @@ export async function handleApi(
     const queryBrand = brandFrom(url.searchParams.get('brand'))
 
     if (queryBrand === undefined) {
-      send(res, 400, { error: 'brand 只接受 cn、global、codebuddy 或 minimax' })
+      send(res, 400, { error: 'brand 只接受 cn、global 或 codebuddy' })
       return
     }
     const adapter = adapters[queryBrand]
     const codebuddy = queryBrand === 'codebuddy' ? adapter as CodeBuddyAdapter : undefined
-    const minimax = queryBrand === 'minimax' ? adapter as MinimaxAdapter : undefined
-    const regional = codebuddy !== undefined || minimax !== undefined
 
     if (path === '/models' && method === 'GET') {
       const requestedRegion = url.searchParams.get('region')
       const region = requestedRegion === null || requestedRegion === ''
         ? undefined
         : regionFrom(requestedRegion)
-      if (regional && region === undefined && requestedRegion !== null && requestedRegion !== '') {
+      if (codebuddy !== undefined && region === undefined && requestedRegion !== null && requestedRegion !== '') {
         send(res, 400, { error: 'region 只接受 global 或 cn' })
         return
       }
       if (url.searchParams.get('fresh') === '1') {
         if (codebuddy !== undefined) codebuddy.invalidateCatalog(region)
-        else if (minimax !== undefined) minimax.invalidateCatalog(region)
         else adapter.invalidateCatalog()
       }
-      const signedIn = codebuddy?.isSignedIn(region) ?? minimax?.isSignedIn(region)
+      const signedIn = codebuddy?.isSignedIn(region)
       const rows = codebuddy !== undefined
         ? signedIn === false ? [] : await buildCodeBuddyRows(codebuddy, region)
-        : minimax !== undefined
-          ? signedIn === false ? [] : await buildMinimaxRows(minimax, region)
-          : await buildRows(adapter as QoderAdapter)
+        : await buildRows(adapter as QoderAdapter)
       const notice = rows.length === 0
-        ? codebuddy !== undefined
-          ? codebuddy.catalogError(region)
-          : minimax !== undefined ? minimax.catalogError(region) : adapter.catalogError()
+        ? codebuddy !== undefined ? codebuddy.catalogError(region) : adapter.catalogError()
         : undefined
       send(res, 200, {
         brand: queryBrand,
@@ -243,7 +209,6 @@ export async function handleApi(
         // the other login: a harmless extra field for the Qoder brands.
         ...region === undefined ? {} : { region },
         ...signedIn === undefined ? {} : { signedIn },
-        ...minimax === undefined ? {} : { regionBlocked: minimax.regionBlocked(region) },
         ...notice === undefined ? {} : { notice },
       })
       return
@@ -252,29 +217,25 @@ export async function handleApi(
     if (path === '/usage' && method === 'GET') {
       const requested = url.searchParams.get('region')
       const region = requested === null || requested === '' ? undefined : regionFrom(requested)
-      if (regional && region === undefined && requested !== null && requested !== '') {
+      if (codebuddy !== undefined && region === undefined && requested !== null && requested !== '') {
         send(res, 400, { error: 'region 只接受 global 或 cn' })
         return
       }
       const fresh = url.searchParams.get('fresh') === '1'
       const snapshot = codebuddy !== undefined
         ? await codebuddy.usageInfo(fresh, region)
-        : minimax !== undefined
-          ? await minimax.usageInfo(fresh, region)
-          : await adapter.usageInfo(fresh)
+        : await adapter.usageInfo(fresh)
       send(res, 200, {
         brand: queryBrand,
         ...snapshot,
-        ...codebuddy === undefined && minimax === undefined
-          ? {}
-          : { signedIn: (codebuddy ?? minimax)!.isSignedIn(region) },
+        ...codebuddy === undefined ? {} : { signedIn: codebuddy.isSignedIn(region) },
       })
       return
     }
 
     if (path === '/auth') {
       if (method === 'GET') {
-        if (codebuddy === undefined && minimax === undefined) {
+        if (codebuddy === undefined) {
           send(res, 404, { error: '该 provider 没有浏览器登录流程' })
           return
         }
@@ -283,9 +244,7 @@ export async function handleApi(
           send(res, 400, { error: 'region 只接受 global 或 cn' })
           return
         }
-        send(res, 200, codebuddy !== undefined
-          ? { brand: 'codebuddy', ...codebuddy.authStatus(region) }
-          : { brand: 'minimax', ...minimax!.authStatus(region) })
+        send(res, 200, { brand: 'codebuddy', ...codebuddy.authStatus(region) })
         return
       }
       if (method === 'POST') {
@@ -299,7 +258,7 @@ export async function handleApi(
         // A POST selects its provider in the body: the page never puts the
         // brand in the URL for writes.
         const postBrand = brandFrom(body.brand)
-        if (postBrand !== 'codebuddy' && postBrand !== 'minimax') {
+        if (postBrand !== 'codebuddy') {
           send(res, 400, { error: '该 provider 没有浏览器登录流程' })
           return
         }
@@ -312,36 +271,22 @@ export async function handleApi(
           send(res, 400, { error: 'action 只接受 login 或 logout' })
           return
         }
-        if (postBrand === 'codebuddy') {
-          const cb = adapters.codebuddy as CodeBuddyAdapter
-          if (body.action === 'logout') {
-            const result = await cb.logout(region)
-            if (!result.ok) {
-              send(res, 500, { error: result.error })
-              return
-            }
-            send(res, 200, { brand: 'codebuddy', ...cb.authStatus(region) })
-            return
-          }
-          const started = cb.startLogin(region)
-          if (started.started === false) {
-            send(res, 409, { error: started.error })
+        const cb = adapters.codebuddy as CodeBuddyAdapter
+        if (body.action === 'logout') {
+          const result = await cb.logout(region)
+          if (!result.ok) {
+            send(res, 500, { error: result.error })
             return
           }
           send(res, 200, { brand: 'codebuddy', ...cb.authStatus(region) })
           return
         }
-        const mm = adapters.minimax as MinimaxAdapter
-        if (body.action === 'logout') {
-          send(res, 200, { brand: 'minimax', ...await mm.logout(region) })
-          return
-        }
-        const started = mm.startLogin(region)
+        const started = cb.startLogin(region)
         if (started.started === false) {
           send(res, 409, { error: started.error })
           return
         }
-        send(res, 200, { brand: 'minimax', ...mm.authStatus(region) })
+        send(res, 200, { brand: 'codebuddy', ...cb.authStatus(region) })
         return
       }
     }

@@ -1,5 +1,5 @@
 /**
- * The four settings sections, and the advanced scalars each of them edits.
+ * The three settings sections, and the advanced scalars each of them edits.
  *
  * They share one page component, the same API routes and the same copy keys;
  * only the config fields, the brand and the account card differ. The order
@@ -62,22 +62,6 @@ export const BRANDS: readonly Brand[] = [
       windows: 'codebuddyGlobalModelContextWindows',
     },
   },
-  {
-    id: 'minimax',
-    kind: 'minimax',
-    settingsId: 'minimax',
-    order: 39,
-    titleKey: 'minimaxTitle',
-    navKey: 'minimaxNav',
-    introKey: 'minimaxIntro',
-    noModelsKey: 'minimaxNoModels',
-    fields: {
-      enabled: 'minimaxEnabled',
-      // Swapped for the selected region's fields, like CodeBuddy.
-      disabled: 'minimaxCnDisabledModels',
-      windows: 'minimaxCnModelContextWindows',
-    },
-  },
 ]
 
 /**
@@ -86,7 +70,7 @@ export const BRANDS: readonly Brand[] = [
  * The host's schema stays the source of truth for labels, help text and bounds;
  * this list only decides order and which control to render.
  */
-export const ADVANCED: Record<'cn' | 'global' | 'codebuddy' | 'minimax', AdvancedFields> = {
+export const ADVANCED: Record<'cn' | 'global' | 'codebuddy', AdvancedFields> = {
   cn: [
     ['displayName', 'text'],
     ['maxSessions', 'number'],
@@ -109,9 +93,5 @@ export const ADVANCED: Record<'cn' | 'global' | 'codebuddy' | 'minimax', Advance
   codebuddy: [
     ['codebuddyDisplayName', 'text'],
     ['codebuddyModelAliases', 'json'],
-  ],
-  minimax: [
-    ['minimaxDisplayName', 'text'],
-    ['minimaxModelAliases', 'json'],
   ],
 }

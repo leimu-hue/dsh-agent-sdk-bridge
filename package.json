@@ -1,8 +1,8 @@
 {
   "name": "dsh-agent-sdk-bridge",
   "displayName": "Agent SDK Bridge",
-  "description": "DeepSeek Harness LLM adapter bridge for Qoder CN, Qoder International, Tencent CodeBuddy and MiniMax Code subscriptions. It reuses each provider's own SDK or official ACP server and CLI login, shows available quota, and exposes per-provider settings pages with independent international and mainland login regions.",
-  "version": "1.3.4",
+  "description": "DeepSeek Harness LLM adapter bridge for Qoder CN, Qoder International and Tencent CodeBuddy subscriptions. It reuses each provider's own official SDK and CLI login, shows available quota, and exposes per-provider settings pages with independent international and mainland login regions.",
+  "version": "2.0.0",
   "type": "module",
   "license": "MIT",
   "author": "k1-h2",
@@ -17,10 +17,6 @@
     "qoder-international",
     "codebuddy",
     "codebuddy-code",
-    "minimax",
-    "minimax-code",
-    "acp",
-    "agent-client-protocol",
     "quota",
     "model-provider",
     "agent-sdk"
@@ -81,7 +77,6 @@
     "@deepseek-ai/schemastery": "^3.18.1"
   },
   "dependencies": {
-    "@agentclientprotocol/sdk": "^1.9.0",
     "@qoder-ai/qoder-agent-sdk": "^1.0.58",
     "@qodercn-ai/qodercn-agent-sdk": "^1.0.58",
     "@tencent-ai/agent-sdk": "^0.3.289",

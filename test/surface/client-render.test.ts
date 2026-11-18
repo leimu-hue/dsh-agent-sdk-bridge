@@ -20,7 +20,6 @@ import { writeCache } from '../../src/client/api.ts'
 import { BRANDS } from '../../src/client/brands.ts'
 import { BundleSettings } from '../../src/client/components/bundle-settings.tsx'
 import { CodeBuddyCard } from '../../src/client/components/codebuddy-card.tsx'
-import { MinimaxCard } from '../../src/client/components/minimax-card.tsx'
 import { SettingsPage } from '../../src/client/components/settings-page.tsx'
 import { UsageCard } from '../../src/client/components/usage-card.tsx'
 import { zh } from '../../src/client/copy.ts'
@@ -73,7 +72,6 @@ function render(component: unknown, props: Record<string, unknown>): string {
 
 const CN = BRANDS[0]!
 const CODEBUDDY = BRANDS[2]!
-const MINIMAX = BRANDS[3]!
 
 beforeEach(() => {
   // Each case seeds only what it asserts on; the cache is module-scoped.
@@ -113,11 +111,11 @@ describe('model list page', () => {
     expect(html).toContain('dssb-visually-hidden')
   })
 
-  it('keeps the region select on a labelled row for the regional providers', () => {
-    const html = render(SettingsPage, { ctx: makeCtx({ minimaxRegion: 'cn' }), t, brand: MINIMAX })
+  it('keeps the region select on a labelled row for the regional provider', () => {
+    const html = render(SettingsPage, { ctx: makeCtx({ codebuddyRegion: 'cn' }), t, brand: CODEBUDDY })
     // Signed out: the page shows the account card and the reason, not a table.
     expect(html).toContain('登录区域')
-    expect(html).toContain('请先安装并登录 MiniMax Code')
+    expect(html).toContain('请先登录 CodeBuddy')
   })
 })
 
@@ -147,24 +145,6 @@ describe('account cards', () => {
     expect(html).toContain('codebuddy.ai')
     expect(html).toContain('登录')
   })
-
-  it('renders a signed-in MiniMax account with its quota windows', () => {
-    writeCache('minimax', 'snapshot:cn', {
-      auth: { signedIn: true, running: false, region: 'cn' },
-      usage: {
-        installed: true,
-        signedIn: true,
-        plan: { kind: 'token-plan', name: 'Token Plan 5h' },
-        credits: { remaining: 42 },
-        windows: [{ id: 'w1', label: '5 小时', remainingPercent: 80, resetAt: 1_800_000_000_000 }],
-      },
-    })
-    const ctx = makeCtx({ minimaxRegion: 'cn' })
-    const html = render(MinimaxCard, { t, ctx, brand: MINIMAX, refreshSignal: 0 })
-    expect(html).toContain('Token Plan 5h')
-    expect(html).toContain('42')
-    expect(html).toContain('role="progressbar"')
-  })
 })
 
 describe('edition switches', () => {
@@ -181,6 +161,6 @@ describe('edition switches', () => {
       t,
       view: 'toolbar',
     })
-    expect(html).toBe('<span>Qoder CN · CodeBuddy · MiniMax Code</span>')
+    expect(html).toBe('<span>Qoder CN · CodeBuddy</span>')
   })
 })

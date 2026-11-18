@@ -219,8 +219,8 @@ export type ResolvedFeedPart =
 /**
  * Split a feed into text and resolved images for providers with a vision API.
  *
- * The two non-Qoder adapters (CodeBuddy, MiniMax) speak their own content-block
- * shapes, so this returns a neutral list rather than a provider shape: text
+ * The non-Qoder adapter (CodeBuddy) speaks its own content-block
+ * shape, so this returns a neutral list rather than a provider shape: text
  * parts pass through, an image uses its bytes when the host could read them,
  * and an unreadable image keeps a note naming what was dropped instead of
  * silently disappearing from the prompt.

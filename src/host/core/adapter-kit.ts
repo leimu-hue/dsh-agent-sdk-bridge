@@ -219,11 +219,11 @@ const EFFORT_NAMES: Readonly<Record<string, string>> = {
 /**
  * Strength order used to pick a model's starting level.
  *
- * The three providers spell their levels differently (Qoder publishes
- * `low|medium|high|max`, MiniMax `low|high`, CodeBuddy whatever its catalog
- * declares), so the ranking is by name rather than by position in any one
- * upstream list. An id outside this table ranks below every known one, which is
- * what several sources agreeing on an unfamiliar spelling should do.
+ * The providers spell their levels differently (Qoder publishes
+ * `low|medium|high|max`, CodeBuddy whatever its catalog declares), so the
+ * ranking is by name rather than by position in any one upstream list. An id
+ * outside this table ranks below every known one, which is what several sources
+ * agreeing on an unfamiliar spelling should do.
  */
 const EFFORT_ORDER: readonly string[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 

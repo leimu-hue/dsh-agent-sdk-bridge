@@ -1,7 +1,7 @@
 /**
  * A tool can return a picture: `read_image` hands back pixels beside its path
  * envelope. On these routes tool results reach the inner model through the
- * MCP/ACP result channel, not through the prompt feed, so the renderer for that
+ * MCP result channel, not through the prompt feed, so the renderer for that
  * channel is the only place the image can survive.
  *
  * These cases pin both halves: a readable attachment becomes an image content
@@ -15,8 +15,6 @@ import { CodeBuddyAdapter } from '../src/host/providers/codebuddy/adapter.ts'
 import { renderCodeBuddyResult } from '../src/host/providers/codebuddy/session.ts'
 import { QoderAdapter } from '../src/host/providers/qoder/adapter.ts'
 import { feedToText, imageRefText, renderInitialFeed } from '../src/host/core/render.ts'
-import { MinimaxAdapter } from '../src/host/providers/minimax/adapter.ts'
-import { renderToolResult } from '../src/host/providers/minimax/session.ts'
 import { resolveTurnImages } from '../src/host/core/adapter-kit.ts'
 
 const REF: ImageAttachmentRef = {
@@ -47,18 +45,6 @@ describe('tool-result images', () => {
     expect(content).toHaveLength(1)
     expect(content[0]).toMatchObject({ type: 'text', text: expect.stringContaining('image omitted') })
     expect(content[0]).toMatchObject({ type: 'text', text: expect.stringContaining('2b081468') })
-  })
-
-  it('forwards a MiniMax tool image as an MCP image block', () => {
-    expect(renderToolResult(RESULT, IMAGES).content).toEqual([
-      { type: 'text', text: '<path>C:/pictures/9.png</path>' },
-      { type: 'image', data: 'QUJD', mimeType: 'image/png' },
-    ])
-  })
-
-  it('keeps the handle text when a MiniMax tool image cannot be read', () => {
-    const result = renderToolResult([{ type: 'image', attachment: REF }], new Map())
-    expect(result.content[0]).toMatchObject({ type: 'text', text: expect.stringContaining('2b081468') })
   })
 
   it('resolves images from tool results in the not-yet-fed tail', async () => {

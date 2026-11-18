@@ -111,10 +111,10 @@ describe('normal conversation unchanged', () => {
 })
 
 describe('every adapter routes side channels through the shared renderer', () => {
-  const adapters = ['qoder/adapter.ts', 'codebuddy/adapter.ts', 'minimax/adapter.ts']
+  const adapters = ['qoder/adapter.ts', 'codebuddy/adapter.ts']
 
   it.each(adapters)('%s', file => {
-    // A behavioral test would have to boot three SDKs; what actually regressed
+    // A behavioral test would have to boot two SDKs; what actually regressed
     // was one line in each adapter, so the guard is on that line: build the
     // prompt with renderSideChannelFeed, and never re-add the old tail.
     const text = readFileSync(new URL(`../../src/host/providers/${file}`, import.meta.url), 'utf8')

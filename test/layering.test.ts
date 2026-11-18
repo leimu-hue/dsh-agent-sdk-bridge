@@ -2,7 +2,7 @@
  * The dependency direction `index → surface/providers → infra → core` is a rule,
  * not a preference: `core` is what every provider shares, so one provider
  * reaching into another makes two siblings inseparable and hides the real owner
- * of a symbol. Both shapes appeared here — CodeBuddy and MiniMax imported
+ * of a symbol. Both shapes appeared here — CodeBuddy imported
  * `reasoningInfo` / `planContinuation` / the host-tool kit from `providers/qoder`
  * simply because Qoder defined them first.
  *
@@ -48,7 +48,7 @@ describe('module layering', () => {
       for (const specifier of specifiers(file.text)) {
         const sibling = /^\.\.\/([^/]+)\//.exec(specifier)?.[1]
         if (sibling === undefined || sibling === own || sibling === 'core') continue
-        if (!['qoder', 'codebuddy', 'minimax'].includes(sibling)) continue
+        if (!['qoder', 'codebuddy'].includes(sibling)) continue
         offences.push(`${file.path} → ${specifier}`)
       }
     }

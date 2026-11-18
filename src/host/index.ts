@@ -29,7 +29,6 @@ import type { ServerResponse, IncomingMessage } from 'node:http'
 import type { AttachmentStore, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { QoderAdapter, QODER_PROVIDER, QODER_INTL_PROVIDER } from './providers/qoder/adapter.ts'
 import { CodeBuddyAdapter, CODEBUDDY_PROVIDER } from './providers/codebuddy/adapter.ts'
-import { MinimaxAdapter, MINIMAX_PROVIDER } from './providers/minimax/adapter.ts'
 import { API_PREFIX, handleApi } from './surface/api.ts'
 import type { BrandId } from './core/brand.ts'
 import { BRANDS } from './core/brand.ts'
@@ -89,20 +88,6 @@ export { QoderAdapter, QODER_PROVIDER, QODER_INTL_PROVIDER, cliContextWindow, pi
 export type { ImageRequestReader } from './core/adapter-kit.ts'
 export type { QoderAdapterOptions } from './providers/qoder/adapter.ts'
 export { CodeBuddyAdapter, CODEBUDDY_PROVIDER, resolveCodeBuddyModelId } from './providers/codebuddy/adapter.ts'
-export { MinimaxAdapter, MINIMAX_PROVIDER, resolveMinimaxModelId } from './providers/minimax/adapter.ts'
-export {
-  MinimaxAcp, MinimaxAuth, MinimaxCatalog, MinimaxSession, MinimaxSessionManager,
-  minimaxColdStream, minimaxDataDir, minimaxAuthStatePath, minimaxCliCommand,
-  isHostMcpTool, hostMcpToolName, minimaxModelsFromConfigOptions,
-  minimaxUsage, minimaxUsageFromParts, invalidateMinimaxUsage,
-  minimaxRegionBlocked, minimaxRegionBlockedCached, minimaxRegionBlockMessage,
-  minimaxHostBelongsToOtherRegion, invalidateMinimaxRegionAccess, MinimaxRegionBlockedError,
-  MINIMAX_DEFAULT_CONTEXT_WINDOW, MINIMAX_DEFAULT_MAX_TOKENS, MINIMAX_USAGE_CACHE_TTL_MS,
-} from './providers/minimax/session.ts'
-export type {
-  MinimaxAccountInfo, MinimaxAuthStatus, MinimaxCreditInfo, MinimaxMcpToolResult,
-  MinimaxModel, MinimaxPlanInfo, MinimaxQuotaWindow, MinimaxUsageSnapshot,
-} from './providers/minimax/session.ts'
 export type { CodeBuddyAdapterOptions } from './providers/codebuddy/adapter.ts'
 export {
   CodeBuddyAuth, CodeBuddyAccountReader, CodeBuddyCatalog, CodeBuddySession, CodeBuddySessionManager,
@@ -116,8 +101,6 @@ export type {
 export { BRANDS, CN_BRAND, GLOBAL_BRAND, CODEBUDDY_BRAND, brandProfile, codeBuddyEnvironment, isBrandId } from './core/brand.ts'
 export type { BrandId, BrandProfile, CodeBuddyRegion, QoderBrand } from './core/brand.ts'
 export { loadCodeBuddySdk, loadSdk } from './infra/sdk.ts'
-export { resolveMinimaxCli } from './infra/minimax-cli.ts'
-export type { MinimaxCliSpec } from './infra/minimax-cli.ts'
 export { QoderUsage, DEFAULT_USAGE_CACHE_TTL_MS, DEFAULT_USAGE_TIMEOUT_MS } from './providers/qoder/usage.ts'
 export type { UsageSnapshot } from './providers/qoder/usage.ts'
 export { QoderSession, QoderSessionManager } from './providers/qoder/session.ts'
@@ -162,8 +145,8 @@ const REQUEST_IMAGE_MAX_BYTES = 1_048_576
  * used, so a change to these fields is the only thing that needs a republish.
  */
 const STRUCTURAL_FIELDS: ReadonlySet<string> = new Set([
-  'cnEnabled', 'intlEnabled', 'codebuddyEnabled', 'minimaxEnabled',
-  'displayName', 'intlDisplayName', 'codebuddyDisplayName', 'minimaxDisplayName',
+  'cnEnabled', 'intlEnabled', 'codebuddyEnabled',
+  'displayName', 'intlDisplayName', 'codebuddyDisplayName',
 ])
 
 /** The configurable-provider directory rows for the enabled editions. */
@@ -182,9 +165,6 @@ function directoryFor(live: LiveConfig): {
   }
   if (live.codebuddyEnabled()) {
     rows.push({ provider: CODEBUDDY_PROVIDER, displayName: live.codebuddyDisplayName(), settingsNs: NS, settingsPath: [] })
-  }
-  if (live.minimaxEnabled()) {
-    rows.push({ provider: MINIMAX_PROVIDER, displayName: live.minimaxDisplayName(), settingsNs: NS, settingsPath: [] })
   }
   return rows
 }
@@ -266,7 +246,7 @@ export function apply(ctx: Context, config: ParsedConfig): void {
    * own catalog, warm sessions, account reading and user choices, so a request
    * can never be resolved against another provider's catalog.
    */
-  const adapters: Record<BrandId, QoderAdapter | CodeBuddyAdapter | MinimaxAdapter> = {
+  const adapters: Record<BrandId, QoderAdapter | CodeBuddyAdapter> = {
     cn: new QoderAdapter({
       ...shared,
       brand: 'cn',
@@ -303,26 +283,6 @@ export function apply(ctx: Context, config: ParsedConfig): void {
       readImage: shared.readImage,
       imagePath: shared.imagePath,
     }),
-    minimax: new MinimaxAdapter({
-      maxSessions: live.maxSessions,
-      modelCacheTtlMs: live.modelCacheTtlMs,
-      catalogFetchTimeoutMs: live.catalogFetchTimeoutMs,
-      toolResultTimeoutMs: live.toolResultTimeoutMs,
-      abortGraceMs: live.abortGraceMs,
-      defaultMaxTokens: live.defaultMaxTokens,
-      defaultReasoningEffort: live.defaultReasoningEffort,
-      displayName: live.minimaxDisplayName,
-      region: live.minimaxRegion,
-      disabledModels: region => region === 'cn'
-        ? live.minimaxCnDisabledModels()
-        : live.minimaxGlobalDisabledModels(),
-      modelContextWindows: region => region === 'cn'
-        ? live.minimaxCnModelContextWindows()
-        : live.minimaxGlobalModelContextWindows(),
-      modelAliases: live.minimaxModelAliases,
-      readImage: shared.readImage,
-      imagePath: shared.imagePath,
-    }),
   }
 
   ctx.inject(['attachments'], (scope) => {
@@ -345,7 +305,6 @@ export function apply(ctx: Context, config: ParsedConfig): void {
   const enabled = (id: BrandId): boolean => {
     if (id === 'cn') return live.cnEnabled()
     if (id === 'global') return live.intlEnabled()
-    if (id === 'minimax') return live.minimaxEnabled()
     return live.codebuddyEnabled()
   }
 
@@ -402,7 +361,6 @@ export function apply(ctx: Context, config: ParsedConfig): void {
     adapters.cn.close()
     adapters.global.close()
     ;(adapters.codebuddy as CodeBuddyAdapter).close()
-    ;(adapters.minimax as MinimaxAdapter).close()
   }, 'llm-qoder-cn.sessions')
 
   // The settings page's data source: the live catalog joined with the user's

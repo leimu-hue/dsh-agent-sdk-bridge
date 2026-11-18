@@ -2,11 +2,10 @@
  * Cache-first catalogue reads for the model picker.
  *
  * The harness resolves a route every time the user switches model or reasoning
- * level, and each of the three providers answers that resolution from a
- * catalogue whose fetch is expensive: Qoder cold-starts its CLI (up to the
- * fetch timeout), CodeBuddy boots a process, MiniMax probes over ACP. Awaiting
- * that fetch inside a resolution made the picker freeze for seconds whenever
- * the cache had just expired.
+ * level, and each provider answers that resolution from a catalogue whose
+ * fetch is expensive: Qoder cold-starts its CLI (up to the fetch timeout),
+ * CodeBuddy boots a process. Awaiting that fetch inside a resolution made the
+ * picker freeze for seconds whenever the cache had just expired.
  *
  * So a resolution reads the last successful snapshot when there is one and lets
  * the catalogue refresh behind it; only the very first resolution, where there

@@ -17,15 +17,14 @@ import type { ReactElement } from 'react'
 import { api, readCache, withDeadline, writeCache, WRITE_TIMEOUT_MS } from '../api.ts'
 import { ADVANCED } from '../brands.ts'
 import { priceSuffix, windowLabel } from '../format.ts'
-import { codeBuddySnapshot, minimaxSnapshot } from '../snapshots.ts'
+import { codeBuddySnapshot } from '../snapshots.ts'
 import { CLASS, css } from '../styles.ts'
 import type {
-  ConfigSnapshot, MinimaxUsagePayload, ModelList, ModelRow, Region, SlotProps,
+  ConfigSnapshot, ModelList, ModelRow, Region, SlotProps,
 } from '../types.ts'
 import { useUrlFlag, useUrlText } from '../url-state.ts'
 import { AdvancedBlock } from './advanced-fields.tsx'
 import { CodeBuddyCard } from './codebuddy-card.tsx'
-import { MinimaxCard } from './minimax-card.tsx'
 import { LiveAlert, LiveStatus, useInstanceId } from './primitives.tsx'
 import { UsageCard } from './usage-card.tsx'
 
@@ -67,15 +66,11 @@ async function readUntil(
 /** One settings section: the account card, the model list and the advanced block. */
 export function SettingsPage({ ctx, t, brand }: SlotProps): ReactElement {
   const form = ctx.configForms!.get('llm-qoder-cn')
-  /** CodeBuddy and MiniMax both have two login regions and their own catalogs. */
-  const regional = brand.id === 'codebuddy' || brand.id === 'minimax'
+  /** CodeBuddy has two login regions and its own catalog per region. */
+  const regional = brand.id === 'codebuddy'
   const initialSnapshot = form.getSnapshot()?.value ?? {}
-  const initialRegion: Region = brand.id === 'minimax'
-    ? (initialSnapshot.minimaxRegion === 'global' ? 'global' : 'cn')
-    : (initialSnapshot.codebuddyRegion === 'cn' ? 'cn' : 'global')
-  const snapshotFor = (target: Region) => brand.id === 'minimax'
-    ? minimaxSnapshot(target)
-    : codeBuddySnapshot(target)
+  const initialRegion: Region = initialSnapshot.codebuddyRegion === 'cn' ? 'cn' : 'global'
+  const snapshotFor = (target: Region) => codeBuddySnapshot(target)
   // Each login region has its own catalog, deny-list and windows; the cache key
   // follows the region so switching shows that region's choices.
   const [region, setRegion] = useState<Region>(initialRegion)
@@ -111,9 +106,7 @@ export function SettingsPage({ ctx, t, brand }: SlotProps): ReactElement {
   const read = useCallback(() => form.getSnapshot(), [form])
   const snapshot = useSyncExternalStore(subscribe, read, read) as ConfigSnapshot | undefined
 
-  const configuredRegion: Region = brand.id === 'minimax'
-    ? (snapshot?.value?.minimaxRegion === 'global' ? 'global' : 'cn')
-    : (snapshot?.value?.codebuddyRegion === 'cn' ? 'cn' : 'global')
+  const configuredRegion: Region = snapshot?.value?.codebuddyRegion === 'cn' ? 'cn' : 'global'
   /**
    * The region the user just picked, until the config write lands.
    *
@@ -140,12 +133,7 @@ export function SettingsPage({ ctx, t, brand }: SlotProps): ReactElement {
         disabled: region === 'cn' ? 'codebuddyCnDisabledModels' : 'codebuddyGlobalDisabledModels',
         windows: region === 'cn' ? 'codebuddyCnModelContextWindows' : 'codebuddyGlobalModelContextWindows',
       }
-    : brand.id === 'minimax'
-      ? {
-          disabled: region === 'cn' ? 'minimaxCnDisabledModels' : 'minimaxGlobalDisabledModels',
-          windows: region === 'cn' ? 'minimaxCnModelContextWindows' : 'minimaxGlobalModelContextWindows',
-        }
-      : brand.fields
+    : brand.fields
 
   const describeFace = ctx.configForms!.describe()
   const describeSubscribe = useCallback((listener: () => void) => describeFace.subscribe(listener), [describeFace])
@@ -160,7 +148,7 @@ export function SettingsPage({ ctx, t, brand }: SlotProps): ReactElement {
     )
     // Never adopt a table the host answered for another login region.
     if (regional && typeof payload?.region === 'string' && payload.region !== region) {
-      throw new Error(t(brand.id === 'minimax' ? 'minimaxRegionMismatch' : 'codebuddyRegionMismatch'))
+      throw new Error(t('codebuddyRegionMismatch'))
     }
     return {
       rows: Array.isArray(payload?.models) ? payload.models : [],
@@ -203,35 +191,6 @@ export function SettingsPage({ ctx, t, brand }: SlotProps): ReactElement {
   const lastLoaded = useRef<Region | undefined>(undefined)
   const refresh = useCallback(() => { void loadRef.current() }, [])
 
-  /** The last region verdict, so recovering from a block reloads the list. */
-  const blockedRegion = useRef<Region | undefined>(undefined)
-
-  /**
-   * Keep the model list in step with the region verdict.
-   *
-   * A blocked region has no readable catalog, so its remembered table is
-   * dropped. The reverse matters too: a manual refresh re-probes the network,
-   * and if the verdict flips back the list must be read again without asking
-   * the user to switch region and back.
-   */
-  const handleMinimaxUsage = useCallback((payload: MinimaxUsagePayload) => {
-    if (brand.id !== 'minimax') return
-    const wasBlocked = blockedRegion.current === region
-    if (payload?.regionBlocked !== true) {
-      if (wasBlocked) {
-        blockedRegion.current = undefined
-        refresh()
-      }
-      return
-    }
-    blockedRegion.current = region
-    const notice = typeof payload.error === 'string' ? payload.error : t('minimaxIpBlocked')
-    setModels([])
-    setCatalogNotice(notice)
-    setError(undefined)
-    writeCache(brand.id, kindRef.current, { rows: [], notice, signedIn: true, at: Date.now() })
-  }, [brand.id, region, refresh, t])
-
   /**
    * On a region switch, paint that region's remembered table first and then
    * verify it with the host. The read carries the region explicitly, so it
@@ -240,27 +199,12 @@ export function SettingsPage({ ctx, t, brand }: SlotProps): ReactElement {
   useEffect(() => {
     if (regional) {
       const saved = readCache<{ rows?: ModelRow[], notice?: string, signedIn?: boolean }>(brand.id, modelsKind)
-      // One provider's snapshot per branch: the two shapes only agree on `auth`,
-      // and reading the wrong one's `usage` is how the blocked-region rule and
-      // the locked view drifted apart before.
-      const minimaxAccount = brand.id === 'minimax' ? minimaxSnapshot(region) : undefined
       const codeBuddyAccount = brand.id === 'codebuddy' ? codeBuddySnapshot(region) : undefined
-      const blocked = minimaxAccount?.usage?.regionBlocked === true
-      if (blocked) {
-        // Never paint a remembered table for a region this machine cannot reach.
-        setModels([])
-        setCatalogNotice(typeof minimaxAccount?.usage?.error === 'string'
-          ? minimaxAccount.usage.error
-          : t('minimaxIpBlocked'))
-      } else {
-        setModels(Array.isArray(saved?.rows) ? saved.rows : undefined)
-        setCatalogNotice(typeof saved?.notice === 'string' ? saved.notice : undefined)
-      }
+      setModels(Array.isArray(saved?.rows) ? saved.rows : undefined)
+      setCatalogNotice(typeof saved?.notice === 'string' ? saved.notice : undefined)
       // The account snapshot already knows whether this region is signed in,
       // so the locked view does not flash while the catalog boots.
-      setSignedIn(saved?.signedIn === true
-        || minimaxAccount?.auth?.signedIn === true
-        || codeBuddyAccount?.auth?.signedIn === true)
+      setSignedIn(saved?.signedIn === true || codeBuddyAccount?.auth?.signedIn === true)
       setError(undefined)
     }
     // A switch must not be served from the host's cached catalog: the CLI only
@@ -388,19 +332,7 @@ export function SettingsPage({ ctx, t, brand }: SlotProps): ReactElement {
           onRegionChange={selectRegion}
         />
       )
-    : brand.kind === 'minimax'
-      ? (
-          <MinimaxCard
-            t={t}
-            ctx={ctx}
-            brand={brand}
-            refreshSignal={usageTick}
-            onAuthChange={handleAuthChange}
-            onRegionChange={selectRegion}
-            onUsage={handleMinimaxUsage}
-          />
-        )
-      : null
+    : null
 
   /**
    * Red guidance for "no models".
@@ -424,7 +356,7 @@ export function SettingsPage({ ctx, t, brand }: SlotProps): ReactElement {
         {authCard}
         <div style={css.guide}>
           <div style={css.guideText}>
-            {t(brand.id === 'minimax' ? 'minimaxModelsHint' : 'codebuddyModelsHint')}
+            {t('codebuddyModelsHint')}
           </div>
         </div>
         <LiveAlert>{error}</LiveAlert>

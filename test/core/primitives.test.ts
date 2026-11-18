@@ -156,8 +156,8 @@ const CODEBUDDY_PREFIXES = mcpToolPrefixes('dsh-host')
 
 describe('MCP namespace spellings', () => {
   it('accepts both spellings each backend produces', () => {
-    // CodeBuddy rewrites the server name's hyphen to `_`; the Qoder and MiniMax
-    // CLIs keep it. One server, two names on the wire.
+    // CodeBuddy rewrites the server name's hyphen to `_`; the Qoder CLI keeps
+    // it. One server, two names on the wire.
     expect(CODEBUDDY_PREFIXES).toEqual(['mcp__dsh-host__', 'mcp__dsh_host__'])
   })
 
@@ -208,19 +208,15 @@ describe('stripping the MCP namespace', () => {
   it('makes every backend agree on the doubled name', async () => {
     const { hostToolName: codeBuddyName, isHostTool } = await import('../../src/host/providers/codebuddy/session.ts')
     const qoder = await import('../../src/host/providers/qoder/session.ts')
-    const minimax = await import('../../src/host/providers/minimax/session.ts')
 
     // Each backend is asked about its own namespaced spelling of the same tool.
     expect(codeBuddyName('mcp__dsh_host__mcp__dsh_host__ops_edit_file')).toBe('ops_edit_file')
     expect(qoder.hostToolName('mcp__dsh-host__mcp__dsh-host__ops_edit_file')).toBe('ops_edit_file')
-    expect(minimax.hostMcpToolName('mcp__dsh-host__mcp__dsh-host__ops_edit_file')).toBe('ops_edit_file')
 
     // And each still recognises its own namespaced tools while rejecting bare
     // names, which is what routes a call to the host at all.
     expect(isHostTool('mcp__dsh_host__ops_edit_file')).toBe(true)
     expect(isHostTool('ops_edit_file')).toBe(false)
-    expect(minimax.isHostMcpTool('mcp__dsh-host__ops_bash')).toBe(true)
-    expect(minimax.isHostMcpTool('ops_bash')).toBe(false)
   })
 })
 
@@ -274,9 +270,8 @@ describe('strongestEffort', () => {
     expect(strongestEffort(['none', 'low', 'medium', 'high', 'xhigh', 'max'])).toBe('max')
   })
 
-  it('handles the levels the three providers actually publish', () => {
-    // Qoder's fallback list, MiniMax's thinkingEffort options, CodeBuddy's
-    // per-model supportedEfforts.
+  it('handles the levels the providers actually publish', () => {
+    // Qoder's fallback list and CodeBuddy's per-model supportedEfforts.
     expect(strongestEffort(['low', 'medium', 'high', 'max'])).toBe('max')
     expect(strongestEffort(['low', 'high'])).toBe('high')
     expect(strongestEffort(['low', 'medium', 'high'])).toBe('high')
