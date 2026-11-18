@@ -18,7 +18,7 @@
  * the host withdrew, which the previous add-only replay could not do.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ChannelContent } from '../../../src/core/host-session.ts'
+import type { ChannelContent } from '../../../src/host/core/host-session.ts'
 
 const fake = vi.hoisted(() => {
   const state: {
@@ -56,7 +56,7 @@ const fake = vi.hoisted(() => {
 const inMemory = await import('@modelcontextprotocol/sdk/inMemory.js')
 const clientModule = await import('@modelcontextprotocol/sdk/client/index.js')
 
-vi.mock('../../../src/infra/sdk.ts', () => ({
+vi.mock('../../../src/host/infra/sdk.ts', () => ({
   isDaemonConflict: () => false,
   resetSdk: () => {},
   probeDaemon: async () => {},
@@ -82,7 +82,7 @@ vi.mock('../../../src/infra/sdk.ts', () => ({
   }),
 }))
 
-vi.mock('../../../src/infra/cli.ts', () => ({
+vi.mock('../../../src/host/infra/cli.ts', () => ({
   cliConflictMessage: () => 'conflict',
   cliFailureText: (text: string) => text,
   foreignCliOverride: () => undefined,
@@ -90,7 +90,7 @@ vi.mock('../../../src/infra/cli.ts', () => ({
   resolveQoderCli: () => 'C:/fake/qodercli.exe',
 }))
 
-const { QoderSession } = await import('../../../src/providers/qoder/session.ts')
+const { QoderSession } = await import('../../../src/host/providers/qoder/session.ts')
 
 /**
  * A stand-in for the SDK's `Query`: one long-lived async iterator, like a real

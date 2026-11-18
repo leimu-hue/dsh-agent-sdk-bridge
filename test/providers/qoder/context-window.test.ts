@@ -9,7 +9,7 @@
  * drop a 1M session to 200K and trigger a pointless compaction.
  */
 import { describe, expect, it } from 'vitest'
-import { cliContextWindow, resolveDeclaredWindow } from '../../../src/providers/qoder/adapter.ts'
+import { cliContextWindow, resolveDeclaredWindow } from '../../../src/host/providers/qoder/adapter.ts'
 
 describe('cli context window', () => {
   const withWindows = (available?: readonly number[], fallback: { defaultContextWindow?: number, maxInputTokens?: number } = {}) => ({

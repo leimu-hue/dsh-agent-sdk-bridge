@@ -27,8 +27,8 @@ import { describe, expect, it, vi } from 'vitest'
 /** What the stubbed `resolveQoderCli()` reports for this machine. */
 const machine = vi.hoisted(() => ({ installed: undefined as { path: string } | undefined }))
 
-vi.mock('../../../src/infra/cli.ts', async importOriginal => {
-  const actual = await importOriginal<typeof import('../../../src/infra/cli.ts')>()
+vi.mock('../../../src/host/infra/cli.ts', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../../src/host/infra/cli.ts')>()
   // The rest of the module stays real: `models.ts` also uses the conflict text.
   return { ...actual, resolveQoderCli: () => machine.installed }
 })
@@ -40,15 +40,15 @@ vi.mock('../../../src/infra/cli.ts', async importOriginal => {
  * identity assertion compares the very array the class would return.
  */
 async function fresh(installed: boolean): Promise<{
-  catalog: import('../../../src/providers/qoder/models.ts').QoderModelCatalog
-  fallback: typeof import('../../../src/providers/qoder/models.ts').emptyCatalogFallback
+  catalog: import('../../../src/host/providers/qoder/models.ts').QoderModelCatalog
+  fallback: typeof import('../../../src/host/providers/qoder/models.ts').emptyCatalogFallback
   plan: readonly { id: string }[]
 }> {
   vi.resetModules()
   machine.installed = installed ? { path: 'C:/fake/qoderclicn.cjs' } : undefined
   const [models, catalog] = await Promise.all([
-    import('../../../src/providers/qoder/models.ts'),
-    import('../../../src/core/catalog.ts'),
+    import('../../../src/host/providers/qoder/models.ts'),
+    import('../../../src/host/core/catalog.ts'),
   ])
   return {
     catalog: new models.QoderModelCatalog('cn', 60_000, 1_000),

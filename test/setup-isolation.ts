@@ -2,7 +2,7 @@
  * Redirect CodeBuddy's on-disk state into a throwaway directory for every test
  * file.
  *
- * The store is a module-level singleton, so importing `src/providers/codebuddy/session.ts` at all
+ * The store is a module-level singleton, so importing `src/host/providers/codebuddy/session.ts` at all
  * puts the real `~/.dsh/agent-sdk-bridge/codebuddy-state.json` one property read
  * away — and that file holds a live bearer credential. Reading it is harmless;
  * writing it is not: the recovery added for the "signed in but shown signed

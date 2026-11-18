@@ -23,7 +23,7 @@ const fake = vi.hoisted(() => ({
   refuseConfig: false,
 }))
 
-vi.mock('../../../src/infra/sdk.ts', () => ({
+vi.mock('../../../src/host/infra/sdk.ts', () => ({
   codeBuddyEnvironment: (region: string) => region === 'cn' ? 'internal' : 'external',
   loadCodeBuddySdk: async () => ({
     createSdkMcpServer: () => ({
@@ -56,7 +56,7 @@ const root = mkdtempSync(join(tmpdir(), 'codebuddy-session-'))
 process.env.DSH_CODUBUDDY_CLI_DIR = root
 process.env.DSH_CODUBUDDY_STATE_PATH = join(root, 'state.json')
 
-const { CodeBuddySession } = await import('../../../src/providers/codebuddy/session.ts')
+const { CodeBuddySession } = await import('../../../src/host/providers/codebuddy/session.ts')
 
 afterAll(() => { rmSync(root, { recursive: true, force: true }) })
 

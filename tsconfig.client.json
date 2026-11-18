@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    // The shell's loader hands `react` to a factory function, not to an
+    // ES-module graph, so the classic runtime is the only one that emits
+    // nothing beyond `React.createElement`.
+    "jsx": "react",
+    "noEmit": true,
+    "declaration": false,
+    "emitDeclarationOnly": false,
+    // Nothing is emitted, so this only widens the program to the one test that
+    // renders the pages; `tsconfig.test.json` cannot, because the DOM libs
+    // clash with the Node half's `ReadableStream`.
+    "rootDir": "."
+  },
+  "include": ["src/client/**/*.ts", "src/client/**/*.tsx", "test/surface/client-render.test.ts"]
+}

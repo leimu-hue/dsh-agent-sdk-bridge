@@ -21,7 +21,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { feedToText, renderInitialFeed, renderSideChannelFeed } from '../../src/core/render.ts'
+import { feedToText, renderInitialFeed, renderSideChannelFeed } from '../../src/host/core/render.ts'
 
 /** The first line and shape of DSH's compaction instruction, verbatim. */
 const COMPACTION_INSTRUCTION = [
@@ -117,7 +117,7 @@ describe('every adapter routes side channels through the shared renderer', () =>
     // A behavioral test would have to boot three SDKs; what actually regressed
     // was one line in each adapter, so the guard is on that line: build the
     // prompt with renderSideChannelFeed, and never re-add the old tail.
-    const text = readFileSync(new URL(`../../src/providers/${file}`, import.meta.url), 'utf8')
+    const text = readFileSync(new URL(`../../src/host/providers/${file}`, import.meta.url), 'utf8')
     expect(text).toContain('renderSideChannelFeed(options.system, options.messages')
     expect(text).not.toContain('这是一次性旁路请求')
   })

@@ -6,5 +6,9 @@
     "emitDeclarationOnly": false,
     "rootDir": "."
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  "include": ["src/host/**/*.ts", "test/**/*.ts"],
+  // The rendered-page test pulls the browser half in, and with it the DOM libs
+  // that make `ReadableStream` incompatible with the Node half's. It is
+  // typechecked by `tsconfig.client.json` instead.
+  "exclude": ["test/surface/client-render.test.ts"]
 }

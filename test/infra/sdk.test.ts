@@ -9,8 +9,8 @@
  * instance is needed.
  */
 import { describe, expect, it } from 'vitest'
-import { cliFailureText } from '../../src/infra/cli.ts'
-import { configurationSignature, isDaemonConflict, withSdk } from '../../src/infra/sdk.ts'
+import { cliFailureText } from '../../src/host/infra/cli.ts'
+import { configurationSignature, isDaemonConflict, withSdk } from '../../src/host/infra/sdk.ts'
 
 /** The exact error the SDK raises when the daemon was initialized differently. */
 function conflict(): Error {

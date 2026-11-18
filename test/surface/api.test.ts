@@ -9,10 +9,10 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { describe, expect, it } from 'vitest'
-import { API_PREFIX, handleApi } from '../../src/surface/api.ts'
-import type { QoderAdapter } from '../../src/providers/qoder/adapter.ts'
-import type { CodeBuddyAdapter } from '../../src/providers/codebuddy/adapter.ts'
-import type { MinimaxAdapter } from '../../src/providers/minimax/adapter.ts'
+import { API_PREFIX, handleApi } from '../../src/host/surface/api.ts'
+import type { QoderAdapter } from '../../src/host/providers/qoder/adapter.ts'
+import type { CodeBuddyAdapter } from '../../src/host/providers/codebuddy/adapter.ts'
+import type { MinimaxAdapter } from '../../src/host/providers/minimax/adapter.ts'
 
 /** One live catalog entry the stubbed adapters report. */
 const ENTRY = {

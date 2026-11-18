@@ -40,7 +40,7 @@
       "types": "./lib/types/index.d.ts",
       "default": "./lib/index.js"
     },
-    "./client": "./client.js",
+    "./client": "./lib/client.js",
     "./package.json": "./package.json",
     "./cordis.patch.yml": "./cordis.patch.yml"
   },
@@ -48,10 +48,8 @@
     "lib",
     "src",
     "scripts",
-    "client.js",
     "cordis.patch.yml",
     "README.md",
-    "DEVELOPMENT.md",
     "LICENSE",
     "NOTICE"
   ],
@@ -97,6 +95,10 @@
     "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
     "@deepseek-ai/schemastery": "3.18.4",
     "@types/node": "^22.0.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "tsdown": "^0.22.2",
     "typescript": "^5.9.3",
     "vitest": "^4.1.10"
@@ -105,8 +107,9 @@
     "build": "tsc -p tsconfig.json && tsdown",
     "build:clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\" && npm run build",
     "typecheck": "tsc -p tsconfig.json --noEmit false --emitDeclarationOnly",
+    "typecheck:client": "tsc -p tsconfig.client.json",
     "typecheck:test": "tsc -p tsconfig.test.json",
     "test": "vitest run",
-    "prepublishOnly": "npm run build:clean && npm run typecheck:test && npm test"
+    "prepublishOnly": "npm run build:clean && npm run typecheck:client && npm run typecheck:test && npm test"
   }
 }

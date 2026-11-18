@@ -17,7 +17,7 @@ import { updateVolatile } from '@deepseek-ai/cosmokit'
 import { describe, expect, it } from 'vitest'
 import {
   Config, CODEBUDDY_PROVIDER, MINIMAX_PROVIDER, QODER_INTL_PROVIDER, QODER_PROVIDER, apply, liveConfig, resolveConfig,
-} from '../../src/index.ts'
+} from '../../src/host/index.ts'
 
 /**
  * Validate a raw config the way the loader does.

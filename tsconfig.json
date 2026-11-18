@@ -8,7 +8,7 @@
     "declaration": true,
     "emitDeclarationOnly": true,
     "outDir": "lib/types",
-    "rootDir": "src",
+    "rootDir": "src/host",
     "strict": true,
     "noUncheckedIndexedAccess": false,
     "skipLibCheck": true,
@@ -17,5 +17,5 @@
     "forceConsistentCasingInFileNames": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/host/**/*.ts"]
 }

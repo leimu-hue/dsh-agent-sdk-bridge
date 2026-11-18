@@ -11,7 +11,7 @@
  * place and a new case only adds assertions.
  */
 import * as path from 'node:path'
-import type { CliLookup } from '../../src/infra/cli.ts'
+import type { CliLookup } from '../../src/host/infra/cli.ts'
 
 /** Suffix a native build carries on this platform. */
 export const EXE = process.platform === 'win32' ? '.exe' : ''

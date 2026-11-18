@@ -24,7 +24,7 @@ const root = mkdtempSync(join(tmpdir(), 'codebuddy-cli-'))
 process.env.DSH_CODUBUDDY_CLI_DIR = root
 process.env.DSH_CODUBUDDY_STATE_PATH = join(root, 'state.json')
 
-vi.mock('../../../src/infra/sdk.ts', () => ({
+vi.mock('../../../src/host/infra/sdk.ts', () => ({
   codeBuddyEnvironment: (region: string) => region === 'cn' ? 'internal' : 'external',
   loadCodeBuddySdk: async () => ({
     unstable_v2_createSession: (options: { environment: string, env?: Record<string, string> }) => {
@@ -38,7 +38,7 @@ vi.mock('../../../src/infra/sdk.ts', () => ({
   }),
 }))
 
-const { CodeBuddyCatalog } = await import('../../../src/providers/codebuddy/session.ts')
+const { CodeBuddyCatalog } = await import('../../../src/host/providers/codebuddy/session.ts')
 
 afterAll(() => { rmSync(root, { recursive: true, force: true }) })
 

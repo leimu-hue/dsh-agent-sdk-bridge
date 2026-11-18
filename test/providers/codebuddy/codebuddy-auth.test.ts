@@ -14,7 +14,7 @@ const fake = vi.hoisted(() => {
   }
 })
 
-vi.mock('../../../src/infra/sdk.ts', () => ({
+vi.mock('../../../src/host/infra/sdk.ts', () => ({
   loadCodeBuddySdk: async () => ({
     unstable_v2_logout: async () => {
       fake.calls.push('logout')
@@ -32,7 +32,7 @@ vi.mock('../../../src/infra/sdk.ts', () => ({
   codeBuddyEnvironment: (region: string) => region === 'cn' ? 'internal' : 'external',
 }))
 
-const { CodeBuddyAuth, codeBuddyState } = await import('../../../src/providers/codebuddy/session.ts')
+const { CodeBuddyAuth, codeBuddyState } = await import('../../../src/host/providers/codebuddy/session.ts')
 
 afterAll(() => { rmSync(fake.stateFile, { force: true }) })
 

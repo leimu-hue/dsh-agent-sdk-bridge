@@ -29,7 +29,7 @@ const fake = vi.hoisted(() => ({
   account: { uid: 'u-1', userName: 'dev', userNickname: 'dev', token: 'embedded-token' } as Record<string, unknown>,
 }))
 
-vi.mock('../../../src/infra/sdk.ts', () => ({
+vi.mock('../../../src/host/infra/sdk.ts', () => ({
   codeBuddyEnvironment: (region: string) => region === 'cn' ? 'internal' : 'external',
   loadCodeBuddySdk: async () => ({
     unstable_v2_logout: async (options: Record<string, unknown>) => {
@@ -56,8 +56,8 @@ const statePath = join(root, 'state.json')
 process.env.DSH_CODUBUDDY_CLI_DIR = root
 process.env.DSH_CODUBUDDY_STATE_PATH = statePath
 
-const { CodeBuddyAccountReader, CodeBuddyAuth, codeBuddyState } = await import('../../../src/providers/codebuddy/session.ts')
-const { CodeBuddyStateStore } = await import('../../../src/infra/codebuddy-state.ts')
+const { CodeBuddyAccountReader, CodeBuddyAuth, codeBuddyState } = await import('../../../src/host/providers/codebuddy/session.ts')
+const { CodeBuddyStateStore } = await import('../../../src/host/infra/codebuddy-state.ts')
 
 afterEach(() => {
   vi.unstubAllGlobals()

@@ -31,7 +31,7 @@ const inMemory = await import('@modelcontextprotocol/sdk/inMemory.js')
 const { createSdkMcpServer: createQoderMcpServer } = await import('@qodercn-ai/qodercn-agent-sdk')
 const { z } = await import('zod')
 
-const { HostToolRegistry } = await import('../src/core/host-session.ts')
+const { HostToolRegistry } = await import('../src/host/core/host-session.ts')
 
 type Host = InstanceType<typeof mcp.McpServer>
 type Client = InstanceType<typeof clientModule.Client>
@@ -172,7 +172,7 @@ describe('bare host tool names', () => {
     // model sometimes emits — is answered by the CLI itself before any host
     // round. This pins the naming table the session matches on, because getting
     // it wrong is what turns a working tool into "does not exist".
-    const { isHostTool, hostToolName } = await import('../src/providers/codebuddy/session.ts')
+    const { isHostTool, hostToolName } = await import('../src/host/providers/codebuddy/session.ts')
     expect(isHostTool('mcp__dsh_host__ops_edit_file')).toBe(true)
     expect(isHostTool('mcp__dsh-host__ops_edit_file')).toBe(true)
     expect(hostToolName('mcp__dsh_host__ops_edit_file')).toBe('ops_edit_file')
@@ -185,7 +185,7 @@ describe('bare host tool names', () => {
     // A model that invents the shorter name therefore gets a real host round
     // whose answer is "no such tool", rather than the CLI refusing it before the
     // host ever saw it. Pinned so nobody mistakes that wording for this bug.
-    const { isHostTool, hostToolName } = await import('../src/providers/codebuddy/session.ts')
+    const { isHostTool, hostToolName } = await import('../src/host/providers/codebuddy/session.ts')
     expect(isHostTool('mcp__dsh_host__ops_edit')).toBe(true)
     expect(hostToolName('mcp__dsh_host__ops_edit')).toBe('ops_edit')
   })

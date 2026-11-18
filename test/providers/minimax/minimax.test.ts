@@ -16,10 +16,10 @@ import {
   minimaxUsageFromParts, minimaxUsage, minimaxHostBelongsToOtherRegion,
   minimaxRegionBlocked, minimaxRegionBlockedCached, minimaxTurnUsage,
   invalidateMinimaxRegionAccess, invalidateMinimaxUsage,
-} from '../../../src/providers/minimax/session.ts'
-import { resolveMinimaxCli, minimaxCliArgs } from '../../../src/infra/minimax-cli.ts'
-import { resolveMinimaxModelId } from '../../../src/providers/minimax/adapter.ts'
-import { resolvedFeedParts } from '../../../src/core/render.ts'
+} from '../../../src/host/providers/minimax/session.ts'
+import { resolveMinimaxCli, minimaxCliArgs } from '../../../src/host/infra/minimax-cli.ts'
+import { resolveMinimaxModelId } from '../../../src/host/providers/minimax/adapter.ts'
+import { resolvedFeedParts } from '../../../src/host/core/render.ts'
 
 const RESTORE: (() => void)[] = []
 
