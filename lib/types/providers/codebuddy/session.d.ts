@@ -130,15 +130,24 @@ export declare function toCodeBuddyModel(model: RawLanguageModel): CodeBuddyMode
  * CodeBuddy only answers this after the CLI has started, so the read costs one
  * process boot. Results are cached per region and fall back to the last good
  * list when a refresh fails.
+ *
+ * That boot is paid once per region rather than once per refresh: a warm
+ * *control* session answers every later read. It never sends a turn, so it
+ * holds no conversation, and it is deliberately kept out of
+ * `CodeBuddySessionManager` — it is not one of the host's conversations and
+ * must never consume a `maxSessions` slot.
  */
 export declare class CodeBuddyCatalog {
     private readonly region;
     private readonly ttlMs;
     private readonly timeoutMs;
+    private readonly controlIdleMs;
     private readonly snapshots;
     private readonly inflight;
     private readonly failures;
-    constructor(region: Live<CodeBuddyRegion>, ttlMs?: Live<number>, timeoutMs?: Live<number>);
+    /** Warm control sessions, one per region, released when they go idle. */
+    private readonly controls;
+    constructor(region: Live<CodeBuddyRegion>, ttlMs?: Live<number>, timeoutMs?: Live<number>, controlIdleMs?: Live<number>);
     /**
      * The last catalog read for a region, without fetching.
      *
@@ -151,7 +160,29 @@ export declare class CodeBuddyCatalog {
     /** Why the last refresh failed, or undefined when it succeeded. */
     error(requested?: CodeBuddyRegion): string | undefined;
     invalidate(region?: CodeBuddyRegion): void;
+    /**
+     * Models from the region's warm control session, booting it when needed.
+     *
+     * A failure discards the session: the CLI may have exited on its own, and a
+     * process that cannot answer one control request must not answer the next.
+     * The retry is simply the next read, which starts a fresh one.
+     */
     private fetch;
+    /** The region's control session, booted on first use. */
+    private controlSession;
+    /** Release the process once the region has gone a whole idle window unused. */
+    private armControl;
+    /**
+     * Drop the warm control session(s), so the next read boots a new process.
+     *
+     * Login, logout and a region switch all change what that process would
+     * answer — it was started with one account's credential and one region's
+     * directory — so callers must discard rather than reuse. Idle release and a
+     * failed read arrive here too.
+     */
+    discardControl(region?: CodeBuddyRegion): void;
+    /** Release every warm control session (plugin teardown). */
+    close(): void;
 }
 /** Read the signed-in account once per TTL. */
 export declare class CodeBuddyAccountReader {
