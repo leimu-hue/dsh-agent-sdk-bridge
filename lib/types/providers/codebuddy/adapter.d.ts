@@ -25,6 +25,14 @@ export interface CodeBuddyAdapterOptions {
     catalogFetchTimeoutMs?: Live<number>;
     toolResultTimeoutMs?: Live<number>;
     abortGraceMs?: Live<number>;
+    /**
+     * How long an in-flight turn may keep running after a close was requested.
+     *
+     * The plugin passes its `disposeDrainSeconds` here; `0` restores the old
+     * "kill immediately" behaviour, which truncates the answer and reports it as
+     * a stream failure.
+     */
+    drainMs?: Live<number>;
     defaultMaxTokens?: Live<number>;
     defaultReasoningEffort?: Live<string | undefined>;
     displayName?: Live<string>;
@@ -121,5 +129,12 @@ export declare class CodeBuddyAdapter extends LlmAdapter {
      */
     private windowOption;
     private cwdOf;
+    /**
+     * Tear down every warm session and the control sessions (plugin dispose).
+     *
+     * The pool is sealed rather than merely cleared: a step prepared before the
+     * unload can still be retried through this adapter instance, and a session
+     * created then would outlive every owner it has.
+     */
     close(): void;
 }

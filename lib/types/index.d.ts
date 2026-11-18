@@ -86,6 +86,8 @@ export type { UsageSnapshot } from './providers/qoder/usage.ts';
 export { QoderSession, QoderSessionManager } from './providers/qoder/session.ts';
 export type { SessionModelPolicy, SessionRuntimeOptions } from './providers/qoder/session.ts';
 export { ToolResultPairing } from './core/host-session.ts';
+export { CloseGate, DEFAULT_DRAIN_MS, DEFAULT_SESSION_IDLE_MS, closeFinishReason } from './core/lifecycle.ts';
+export type { CloseCause, PoolSession } from './core/lifecycle.ts';
 export { NARROW_CHARS_PER_TOKEN, WIDE_CHARS_PER_TOKEN, countWideChars, estimateTextTokens, isWideChar } from './core/tokens.ts';
 export { QODER_MODELS, MODEL_ALIASES, resolveQoderModelId, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_TOKENS } from './core/catalog.ts';
 export { QoderModelCatalog, priceFactorOf } from './providers/qoder/models.ts';
@@ -132,6 +134,8 @@ export declare const Config: import("@deepseek-ai/schemastery").default<Schemast
     toolResultTimeoutSeconds: import("@deepseek-ai/schemastery").default<number, number, "volatile-defined">;
     catalogFetchTimeoutSeconds: import("@deepseek-ai/schemastery").default<number, number, "volatile-defined">;
     abortGraceSeconds: import("@deepseek-ai/schemastery").default<number, number, "volatile-defined">;
+    disposeDrainSeconds: import("@deepseek-ai/schemastery").default<number, number, "volatile-defined">;
+    traceEnabled: import("@deepseek-ai/schemastery").default<boolean, boolean, "volatile-defined">;
     coldMaxTurns: import("@deepseek-ai/schemastery").default<number, number, "volatile-defined">;
 }>>, Schemastery.ObjectT<NoInfer<{
     cnEnabled: import("@deepseek-ai/schemastery").default<boolean, boolean, "volatile-defined">;
@@ -159,6 +163,8 @@ export declare const Config: import("@deepseek-ai/schemastery").default<Schemast
     toolResultTimeoutSeconds: import("@deepseek-ai/schemastery").default<number, number, "volatile-defined">;
     catalogFetchTimeoutSeconds: import("@deepseek-ai/schemastery").default<number, number, "volatile-defined">;
     abortGraceSeconds: import("@deepseek-ai/schemastery").default<number, number, "volatile-defined">;
+    disposeDrainSeconds: import("@deepseek-ai/schemastery").default<number, number, "volatile-defined">;
+    traceEnabled: import("@deepseek-ai/schemastery").default<boolean, boolean, "volatile-defined">;
     coldMaxTurns: import("@deepseek-ai/schemastery").default<number, number, "volatile-defined">;
 }>>, "plain">;
 /**

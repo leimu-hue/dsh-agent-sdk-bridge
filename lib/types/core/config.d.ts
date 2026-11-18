@@ -140,6 +140,24 @@ export interface Config {
      */
     abortGraceSeconds?: number;
     /**
+     * Seconds an in-flight turn may keep running after its session was asked to
+     * close (plugin reload, pool reclaim, account switch).
+     *
+     * The harness consumes the turn's chunks from this plugin, not from the
+     * subprocess, so a turn that is already streaming can finish after the plugin
+     * is unloaded — the answer is delivered instead of being truncated into a
+     * bogus "connection lost". `0` closes immediately (the previous behaviour).
+     */
+    disposeDrainSeconds?: number;
+    /**
+     * Whether this plugin writes its own event log to
+     * `~/.dsh/agent-sdk-bridge/bridge.log`.
+     *
+     * DSH's host writes no log file, so this is the only place a session spawn,
+     * close, or turn end is recorded with a millisecond timestamp.
+     */
+    traceEnabled?: boolean;
+    /**
      * Maximum inner turns for one side-channel request (title, compaction).
      */
     coldMaxTurns?: number;
@@ -199,6 +217,8 @@ export declare const Config: z<Schemastery.ObjectS<NoInfer<{
     toolResultTimeoutSeconds: z<number, number, "volatile-defined">;
     catalogFetchTimeoutSeconds: z<number, number, "volatile-defined">;
     abortGraceSeconds: z<number, number, "volatile-defined">;
+    disposeDrainSeconds: z<number, number, "volatile-defined">;
+    traceEnabled: z<boolean, boolean, "volatile-defined">;
     coldMaxTurns: z<number, number, "volatile-defined">;
 }>>, Schemastery.ObjectT<NoInfer<{
     cnEnabled: z<boolean, boolean, "volatile-defined">;
@@ -226,6 +246,8 @@ export declare const Config: z<Schemastery.ObjectS<NoInfer<{
     toolResultTimeoutSeconds: z<number, number, "volatile-defined">;
     catalogFetchTimeoutSeconds: z<number, number, "volatile-defined">;
     abortGraceSeconds: z<number, number, "volatile-defined">;
+    disposeDrainSeconds: z<number, number, "volatile-defined">;
+    traceEnabled: z<boolean, boolean, "volatile-defined">;
     coldMaxTurns: z<number, number, "volatile-defined">;
 }>>, "plain">;
 /** Fully-resolved options with every default applied. */
@@ -241,6 +263,8 @@ export interface ResolvedConfig {
     toolResultTimeoutMs: number;
     catalogFetchTimeoutMs: number;
     abortGraceMs: number;
+    disposeDrainMs: number;
+    traceEnabled: boolean;
     coldMaxTurns: number;
     disabledModels: readonly string[];
     modelContextWindows: Readonly<Record<string, number>>;

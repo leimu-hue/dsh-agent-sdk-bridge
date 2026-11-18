@@ -9,6 +9,7 @@
  */
 import type { ContentBlock, GenerateOptions, RequestMessage, StreamChunk, ToolSchema, TokenUsage } from '@deepseek-ai/dsh-llm';
 import type { QoderBrand } from '../../core/brand.ts';
+import type { CloseCause } from '../../core/lifecycle.ts';
 import type { Live } from '../../core/live.ts';
 import type { ChannelContent, McpContent, ResolvedImages } from '../../core/host-session.ts';
 /** Warm sessions kept alive when the deployment names no cap. */
@@ -28,6 +29,13 @@ export interface SessionRuntimeOptions {
     toolResultTimeoutMs?: Live<number>;
     /** How long the inner process gets to acknowledge an abort. */
     abortGraceMs?: Live<number>;
+    /**
+     * How long an in-flight turn may keep running after a close was requested.
+     *
+     * Read per close, so a settings edit applies to the next reload rather than
+     * to the process that is already shutting down.
+     */
+    drainMs?: Live<number>;
     /** Which edition's SDK and CLI this session speaks to. */
     brand?: QoderBrand;
 }
@@ -199,6 +207,19 @@ export declare class QoderSession {
     private abortPending;
     private disposed;
     /**
+     * Deferred-close state: why this session was asked to stop, and whether an
+     * in-flight turn is being allowed to finish first.
+     *
+     * The harness consumes this session's chunks, not the subprocess's, so a turn
+     * that already started streaming can still deliver its answer after the
+     * plugin was unloaded. Killing the CLI at dispose time instead truncated it
+     * and reported `STREAM_CLOSED` — a plugin reload shown as a dropped network
+     * connection. See {@link CloseGate}.
+     */
+    private readonly closeGate;
+    /** Wall clock of the spawn, for the close log's lifetime figure. */
+    private spawnedAt;
+    /**
      * How the active turn ended, so its cleanup can tell a completed turn (whose
      * unclaimed announcements may still belong to a handler about to fire) from an
      * aborted or failed one (where the CLI cancelled that dispatch).
@@ -265,7 +286,13 @@ export declare class QoderSession {
     private readonly abortGraceMs;
     /** Which edition's CLI (and SDK) this session runs on. */
     private readonly brand;
+    /** How long a close waits for the in-flight turn; read per close. */
+    private readonly drainMs;
     constructor(sessionId: string, initialModel: string, runtime?: SessionRuntimeOptions);
+    /** Whether a turn is in flight; the pool must never evict such a session. */
+    get busy(): boolean;
+    /** Whether this session has been asked to stop and accepts no new turn. */
+    get closing(): CloseCause | undefined;
     /** Spawn the inner process (first stream only) and attach the consumer. */
     private ensureStarted;
     /** Point the session at a model and its per-request policy. */
@@ -331,8 +358,27 @@ export declare class QoderSession {
      *   ended: the retry's own result frame settles it.
      */
     private retryWithoutImages;
-    /** Tear the inner process down; parked calls die with it. */
-    close(): void;
+    /**
+     * Ask the session to stop serving.
+     *
+     * The request is remembered rather than acted on immediately: an in-flight
+     * turn is allowed to finish (up to `drainMs`), because its chunks are being
+     * consumed by the harness and truncating them turns a plugin reload into a
+     * bogus stream failure. {@link teardown} does the actual work.
+     *
+     * @param cause - why it is closing; decides how an interrupted turn is
+     *   reported and how the close is logged.
+     */
+    close(cause?: CloseCause): void;
+    /**
+     * End a turn that outlived its drain window, then let the teardown run.
+     *
+     * The subprocess is about to die, so the turn must not be left waiting for a
+     * `result` frame that will never arrive.
+     */
+    private forceEnd;
+    /** Tear the inner process down; parked calls die with it. Runs once. */
+    private teardown;
     /**
      * Reset the per-turn assembly state.
      *
@@ -426,20 +472,41 @@ export declare function isImageAttachFailure(detail: string): boolean;
 export declare class QoderSessionManager {
     readonly maxSessions: Live<number>;
     private readonly runtime;
+    private readonly create;
     private readonly sessions;
+    /** Set by {@link seal}: this pool's plugin generation is gone. */
+    private sealed;
     /**
      * @param maxSessions - warm-session cap; read per eviction so a settings edit
      *   applies to the next session that overflows the pool.
      * @param runtime - per-session knobs, resolved when each session is created.
+     * @param create - builds one session; injectable so the pool's eviction and
+     *   sealing rules are testable without spawning a CLI.
      */
     constructor(maxSessions?: Live<number>, runtime?: SessionRuntimeOptions & {
         coldMaxTurns?: Live<number>;
-    });
+    }, create?: (sessionId: string, model: string) => QoderSession);
     /** Existing or fresh warm session for one host session id. */
     forSession(sessionId: string, model: string): QoderSession;
     /** Drop one session (history diverged); the next request rebuilds it cold. */
     dispose(sessionId: string): void;
-    closeAll(): void;
+    /**
+     * Drop every warm session, keeping the pool usable.
+     *
+     * For a credential change: the processes loaded the old account, and the
+     * conversations are over, but the adapter keeps serving new ones.
+     *
+     * @param cause - why the sessions go; decides how interrupted turns report.
+     */
+    closeAll(cause?: CloseCause): void;
+    /**
+     * Drop every warm session and refuse to create more.
+     *
+     * Called from the plugin's dispose effect. `closeAll` alone was not enough:
+     * a retry of a step prepared before the unload would reach this manager and
+     * spawn a fresh subprocess that nothing owns afterwards.
+     */
+    seal(cause?: CloseCause): void;
     /** One-shot turn with no warm state: side channels and cold rebuilds. */
     coldStream(options: GenerateOptions, prompt: string, model?: string): AsyncGenerator<StreamChunk>;
 }

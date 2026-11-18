@@ -15,6 +15,7 @@ import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm';
 import type { RawLanguageModel } from '@tencent-ai/agent-sdk';
 import type { CodeBuddyRegion } from '../../core/brand.ts';
 import { CodeBuddyStateStore } from '../../infra/codebuddy-state.ts';
+import type { CloseCause } from '../../core/lifecycle.ts';
 import type { Live } from '../../core/live.ts';
 import type { ChannelContent, ResolvedImages, ToolResultPayload } from '../../core/host-session.ts';
 /** Default context capacity assumed for a CodeBuddy model that declares none. */
@@ -248,6 +249,20 @@ export declare class CodeBuddyAuth {
     private login;
 }
 /**
+ * Per-session runtime knobs a warm CodeBuddy session is created with.
+ *
+ * Each value may be a {@link Live} thunk and is resolved when a session is
+ * created, so a settings edit applies to the sessions opened after it.
+ */
+export interface CodeBuddySessionRuntime {
+    /** How long an unpaired MCP tool handler waits before failing its call. */
+    toolResultTimeoutMs?: Live<number>;
+    /** How long the inner process gets to acknowledge an abort. */
+    abortGraceMs?: Live<number>;
+    /** How long an in-flight turn may keep running after a close was requested. */
+    drainMs?: Live<number>;
+}
+/**
  * One warm CodeBuddy session for a host session id.
  *
  * Mirrors the Qoder session's shape: the host's tool calls are exposed through
@@ -274,6 +289,15 @@ export declare class CodeBuddySession {
     private registry;
     private queue;
     private disposed;
+    /**
+     * Deferred-close state: why this session was asked to stop, and whether an
+     * in-flight turn is finishing first. Same contract as the Qoder session —
+     * a plugin reload used to kill the CLI mid-answer and report the cut stream
+     * as a failure. See {@link CloseGate}.
+     */
+    private readonly closeGate;
+    /** Wall clock of the spawn, for the close log's lifetime figure. */
+    private spawnedAt;
     private abortPending;
     private turnEndKind;
     private blockIndex;
@@ -321,10 +345,11 @@ export declare class CodeBuddySession {
     fedMessages: readonly import('@deepseek-ai/dsh-llm').RequestMessage[] | undefined;
     /** Host system prompt last applied; informational for the adapter. */
     fedSystem: string | undefined;
-    constructor(sessionId: string, initialModel: string, runtime?: {
-        toolResultTimeoutMs?: Live<number>;
-        abortGraceMs?: Live<number>;
-    });
+    constructor(sessionId: string, initialModel: string, runtime?: CodeBuddySessionRuntime);
+    /** Whether a turn is in flight; the pool must never evict such a session. */
+    get busy(): boolean;
+    /** Whether this session has been asked to stop and accepts no new turn. */
+    get closing(): CloseCause | undefined;
     /** Point the session at a region, model and optional system prompt. */
     configure(region: CodeBuddyRegion, model: string, options?: {
         effort?: string;
@@ -386,8 +411,20 @@ export declare class CodeBuddySession {
     }[], images?: ResolvedImages): void;
     /** Run one host turn; `feed` is new user content, or null for a tool continuation. */
     stream(options: GenerateOptions, feed: string | ChannelContent[] | null): AsyncGenerator<StreamChunk>;
+    /**
+     * Ask the session to stop serving.
+     *
+     * An in-flight turn is allowed to finish first (up to `drainMs`): its chunks
+     * are consumed by the harness, so the answer arrives instead of being
+     * truncated into a bogus stream failure. {@link teardown} does the work.
+     *
+     * @param cause - why it is closing; decides how an interrupted turn reports.
+     */
+    close(cause?: CloseCause): void;
+    /** End a turn that outlived its drain window, before the CLI dies. */
+    private forceEnd;
     /** Tear the inner CLI down; parked handlers settle with a cancellation. */
-    close(): void;
+    private teardown;
     private ensureStarted;
     private canUseTool;
     private consume;
@@ -410,14 +447,37 @@ export declare function renderCodeBuddyResult(blocks: unknown, images?: Resolved
 export declare class CodeBuddySessionManager {
     readonly maxSessions: Live<number>;
     private readonly runtime;
+    private readonly create;
     private readonly sessions;
-    constructor(maxSessions: Live<number>, runtime?: {
-        toolResultTimeoutMs?: Live<number>;
-        abortGraceMs?: Live<number>;
-    });
+    /** Set by {@link seal}: this pool's plugin generation is gone. */
+    private sealed;
+    /**
+     * @param maxSessions - warm-session cap; read per eviction so a settings edit
+     *   applies to the next session that overflows the pool.
+     * @param runtime - per-session knobs, resolved when each session is created.
+     * @param create - builds one session; injectable so the pool's rules are
+     *   testable without spawning a CLI.
+     */
+    constructor(maxSessions: Live<number>, runtime?: CodeBuddySessionRuntime, create?: (sessionId: string, model: string) => CodeBuddySession);
     forSession(sessionId: string, region: CodeBuddyRegion, model: string): CodeBuddySession;
     dispose(sessionId: string): void;
-    closeAll(): void;
+    /**
+     * Drop every warm session, keeping the pool usable.
+     *
+     * A login or logout changes the credentials those processes loaded, so they
+     * cannot answer for the new account; the pool itself keeps serving.
+     *
+     * @param cause - why the sessions go; decides how interrupted turns report.
+     */
+    closeAll(cause?: CloseCause): void;
+    /**
+     * Drop every warm session and refuse to create more.
+     *
+     * Called from the plugin's dispose effect: a step prepared before the unload
+     * can still be retried through this adapter, and a session created then would
+     * outlive every owner it has.
+     */
+    seal(cause?: CloseCause): void;
 }
 /** A one-shot turn, used for titles and compaction summaries. */
 export declare function codeBuddyColdStream(region: CodeBuddyRegion, prompt: string, model: string | undefined, options: GenerateOptions): Promise<StreamChunk[]>;
