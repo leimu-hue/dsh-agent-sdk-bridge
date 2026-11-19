@@ -69,6 +69,18 @@ declare module '@deepseek-ai/cordis' {
          * @param paths - one path array per committed field, e.g. `[['displayName']]`.
          */
         'loader/volatile-update'(paths: readonly (readonly string[])[]): void;
+        /**
+         * One provider's advertised models or display metadata changed.
+         *
+         * The host forwards it to every connected GUI, whose model picker reloads
+         * the catalog. Declared here because the `@deepseek-ai/dsh-llm` version this
+         * plugin compiles against predates the event, while the harnesses it runs
+         * on (0.2.2-rc.5 and later) declare and dispatch it; emitting an event a
+         * slightly older host does not know is harmless — nothing listens.
+         *
+         * @param provider - the route whose catalog changed.
+         */
+        'llm/models-updated'(provider: string): void;
     }
 }
 export { QoderAdapter, QODER_PROVIDER, QODER_INTL_PROVIDER, cliContextWindow, pickContextWindow } from './providers/qoder/adapter.ts';

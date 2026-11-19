@@ -25,6 +25,7 @@ export declare class QoderModelCatalog {
     private readonly brand;
     private readonly ttlMs;
     private readonly fetchTimeoutMs;
+    private readonly onChange?;
     private cached;
     private inflight;
     /** Why the last refresh failed, for the settings page's guidance. */
@@ -36,13 +37,24 @@ export declare class QoderModelCatalog {
      */
     private epoch;
     /**
+     * The list clients were last told about, so a refresh that changed nothing
+     * stays quiet. Deliberately kept across {@link invalidate}: dropping the
+     * cache says "re-read", not "the answer will differ".
+     */
+    private announced;
+    /**
      * @param brand - which edition's CLI answers.
      * @param ttlMs - how long a fetched catalog stays fresh before a re-fetch.
      *   Read per use, so a settings edit takes effect on the next read.
      * @param fetchTimeoutMs - how long one CLI catalog fetch may take before the
      *   static fallback takes over.
+     * @param onChange - notified with the advertised ids when a successful read
+     *   advertises a different list than the last one. The harness forwards this
+     *   to every GUI, whose model picker caches one catalog per Host generation
+     *   and only reloads it on a change notification: without this, a model the
+     *   account gained after login stayed invisible until a restart.
      */
-    constructor(brand: QoderBrand, ttlMs: Live<number>, fetchTimeoutMs?: Live<number>);
+    constructor(brand: QoderBrand, ttlMs: Live<number>, fetchTimeoutMs?: Live<number>, onChange?: ((ids: readonly string[]) => void) | undefined);
     /**
      * Raw live entries; the stale snapshot when a refresh fails, else nothing.
      *
@@ -50,6 +62,16 @@ export declare class QoderModelCatalog {
      * settings page cannot disagree about what the account has.
      */
     liveModels(): Promise<readonly ModelInfo[]>;
+    /**
+     * Tell the owner that the advertised list changed, once per change.
+     *
+     * The GUI's model picker holds one catalog per Host generation and does not
+     * re-read it on its own, so this is the only way a model the account gained
+     * (or lost) reaches the composer without restarting DSH.
+     *
+     * @param models - the official entries this read answered with.
+     */
+    private announce;
     /**
      * The last successful live list, without fetching.
      *

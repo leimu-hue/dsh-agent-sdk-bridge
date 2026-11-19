@@ -52,6 +52,15 @@ export interface CodeBuddyAdapterOptions {
      * edit it. Absent → an unreadable image keeps the harness placeholder.
      */
     imagePath?: ImagePathResolver;
+    /**
+     * Called when the account's advertised model list changes, with the new ids.
+     *
+     * The plugin relays this onto the harness's `llm/models-updated`, which is
+     * how a connected GUI's model picker learns that it must reload. Signing in
+     * or out changes the list without any catalog read noticing, so those paths
+     * report it themselves.
+     */
+    onModelsChanged?: (ids: readonly string[]) => void;
 }
 /** Map a harness-side id onto a CodeBuddy model value. */
 export declare function resolveCodeBuddyModelId(model: string, aliases?: Readonly<Record<string, string>>): string;

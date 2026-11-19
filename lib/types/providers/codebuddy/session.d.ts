@@ -143,12 +143,33 @@ export declare class CodeBuddyCatalog {
     private readonly ttlMs;
     private readonly timeoutMs;
     private readonly controlIdleMs;
+    /**
+     * Notified with the advertised ids when a read advertises a different list
+     * than the last one for that region. The provider route is shared by both
+     * login regions, so the owner relays one notification for the route.
+     */
+    private readonly onChange?;
     private readonly snapshots;
     private readonly inflight;
     private readonly failures;
+    /**
+     * The list clients were last told about, per region.
+     *
+     * A refresh that answers the same ids and names stays quiet; only a real
+     * change is worth making every connected GUI reload a whole model catalog.
+     * Kept across {@link invalidate} — dropping the cache says "re-read", not
+     * "the answer will differ".
+     */
+    private readonly announced;
     /** Warm control sessions, one per region, released when they go idle. */
     private readonly controls;
-    constructor(region: Live<CodeBuddyRegion>, ttlMs?: Live<number>, timeoutMs?: Live<number>, controlIdleMs?: Live<number>);
+    constructor(region: Live<CodeBuddyRegion>, ttlMs?: Live<number>, timeoutMs?: Live<number>, controlIdleMs?: Live<number>, 
+    /**
+     * Notified with the advertised ids when a read advertises a different list
+     * than the last one for that region. The provider route is shared by both
+     * login regions, so the owner relays one notification for the route.
+     */
+    onChange?: ((ids: readonly string[]) => void) | undefined);
     /**
      * The last catalog read for a region, without fetching.
      *
@@ -158,6 +179,13 @@ export declare class CodeBuddyCatalog {
     snapshot(requested?: CodeBuddyRegion): readonly CodeBuddyModel[] | undefined;
     /** Models for one region; a failed refresh keeps the last good list. */
     models(requested?: CodeBuddyRegion): Promise<readonly CodeBuddyModel[]>;
+    /**
+     * Tell the owner that one region's advertised list changed, once per change.
+     *
+     * @param region - the region this read answered for.
+     * @param models - the entries it answered with.
+     */
+    private announce;
     /** Why the last refresh failed, or undefined when it succeeded. */
     error(requested?: CodeBuddyRegion): string | undefined;
     invalidate(region?: CodeBuddyRegion): void;

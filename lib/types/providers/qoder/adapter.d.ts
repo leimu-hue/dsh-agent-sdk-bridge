@@ -71,6 +71,16 @@ export interface QoderAdapterOptions {
     brand?: QoderBrand;
     /** How long one quota reading stays fresh; read per use. */
     usageCacheTtlMs?: Live<number>;
+    /**
+     * Called when the account's advertised model list changes, with the new ids.
+     *
+     * The plugin relays this onto the harness's `llm/models-updated`, which is
+     * the only notification a connected GUI's model picker reacts to. A model the
+     * account gained after the picker had already loaded (a CLI login performed
+     * while DSH is running) was otherwise invisible until a restart re-registered
+     * the adapter.
+     */
+    onModelsChanged?: (ids: readonly string[]) => void;
 }
 /** The primary provider route (the CN account's own models). */
 export declare const QODER_PROVIDER = "qoder-cn";
