@@ -22,6 +22,7 @@ import {
   resolveAliasedModelId, resolveTurnImages,
 } from '../../core/adapter-kit.ts'
 import { cachedModels } from '../../core/model-cache.ts'
+import { DEFAULT_MAX_SESSIONS } from '../../core/session-pool.ts'
 import type { ImageRequestReader } from '../../core/adapter-kit.ts'
 import type { Live } from '../../core/live.ts'
 import { readLive, readLiveOptional } from '../../core/live.ts'
@@ -99,7 +100,7 @@ export class CodeBuddyAdapter extends LlmAdapter {
   constructor(options: CodeBuddyAdapterOptions = {}) {
     super()
     this.options = options
-    this.sessions = new CodeBuddySessionManager(options.maxSessions ?? 8, {
+    this.sessions = new CodeBuddySessionManager(options.maxSessions ?? DEFAULT_MAX_SESSIONS, {
       toolResultTimeoutMs: options.toolResultTimeoutMs,
       abortGraceMs: options.abortGraceMs,
       drainMs: options.drainMs,

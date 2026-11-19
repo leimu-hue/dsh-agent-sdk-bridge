@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Agent SDK 桥接",
+    "description": "通过各家官方 SDK 与本机 CLI 登录，把 Qoder CN、Qoder 国际版与 CodeBuddy 的订阅模型接入 DeepSeek Harness，提供额度卡片、逐模型开关与上下文窗口选择。入口在 设置 → Qoder CN、设置 → Qoder 国际版、设置 → CodeBuddy，不需要 API key。插件复用本机已有的 CLI 登录态，不保存凭据，也不代为安装 CLI。在插件选项里关闭某个版本会一并移除它的设置页、模型分组与 provider 路由。"
+  }
+}

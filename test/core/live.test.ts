@@ -244,4 +244,17 @@ describe('live config', () => {
     expect(live.codebuddyGlobalModelContextWindows()).toEqual({ 'global-model': 1_000_000 })
     expect(live.codebuddyCnModelContextWindows()).toEqual({ 'cn-model': 200_000 })
   })
+
+  it('keeps a list value stable between reads and refreshes it after a commit', () => {
+    const mounted = parse({ disabledModels: ['auto'] })
+    const live = liveConfig(mounted)
+    const first = live.disabledModels()
+    // The adapters memoize their deny-list on this identity; a fresh array per
+    // read would rebuild the set on every model lookup.
+    expect(live.disabledModels()).toBe(first)
+
+    updateVolatile(mounted.disabledModels, parse({ disabledModels: ['auto', 'mmodel'] }).disabledModels)
+    expect(live.disabledModels()).not.toBe(first)
+    expect(live.disabledModels()).toEqual(['auto', 'mmodel'])
+  })
 })

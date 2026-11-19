@@ -272,8 +272,6 @@ export declare class QoderAdapter extends LlmAdapter {
     private capture;
     private dispatch;
     private firstTurn;
-    /** Image references carried by a message tail, skipping assistant content. */
-    private resolveTurnImages;
     /**
      * Turn a feed into channel content. A text feed passes through; a non-vision
      * feed flattens to the harness's own image handle text; an image the host

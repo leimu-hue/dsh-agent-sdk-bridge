@@ -12,8 +12,6 @@ import type { QoderBrand } from '../../core/brand.ts';
 import type { CloseCause } from '../../core/lifecycle.ts';
 import type { Live } from '../../core/live.ts';
 import type { ChannelContent, McpContent, ResolvedImages } from '../../core/host-session.ts';
-/** Warm sessions kept alive when the deployment names no cap. */
-export declare const DEFAULT_MAX_SESSIONS = 8;
 /**
  * Runtime knobs shared by every warm session a manager owns. Populated from the
  * plugin's resolved config, so the settings page is the single place these are
@@ -470,12 +468,9 @@ export declare function isImageAttachFailure(detail: string): boolean;
  * one-shot path for side-channel requests (titles, compaction).
  */
 export declare class QoderSessionManager {
-    readonly maxSessions: Live<number>;
     private readonly runtime;
     private readonly create;
-    private readonly sessions;
-    /** Set by {@link seal}: this pool's plugin generation is gone. */
-    private sealed;
+    private readonly pool;
     /**
      * @param maxSessions - warm-session cap; read per eviction so a settings edit
      *   applies to the next session that overflows the pool.

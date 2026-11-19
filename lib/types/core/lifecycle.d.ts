@@ -26,8 +26,6 @@ export type CloseCause =
 'dispose'
 /** The pool needed the slot for another conversation. */
  | 'evicted'
-/** The session sat unused past its idle TTL. */
- | 'idle'
 /** A login, logout or account switch replaced the credentials. */
  | 'account'
 /** The CodeBuddy login region changed. */
@@ -45,8 +43,6 @@ export type CloseCause =
  * subprocess behind forever.
  */
 export declare const DEFAULT_DRAIN_MS = 120000;
-/** How long a warm session may sit unused before the pool reclaims it. */
-export declare const DEFAULT_SESSION_IDLE_MS = 600000;
 /**
  * The finish reason for a turn interrupted by a session close.
  *

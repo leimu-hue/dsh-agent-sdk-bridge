@@ -473,12 +473,9 @@ export declare function renderCodeBuddyResult(blocks: unknown, images?: Resolved
  * the previous region's endpoint.
  */
 export declare class CodeBuddySessionManager {
-    readonly maxSessions: Live<number>;
     private readonly runtime;
     private readonly create;
-    private readonly sessions;
-    /** Set by {@link seal}: this pool's plugin generation is gone. */
-    private sealed;
+    private readonly pool;
     /**
      * @param maxSessions - warm-session cap; read per eviction so a settings edit
      *   applies to the next session that overflows the pool.
@@ -488,6 +485,7 @@ export declare class CodeBuddySessionManager {
      */
     constructor(maxSessions: Live<number>, runtime?: CodeBuddySessionRuntime, create?: (sessionId: string, model: string) => CodeBuddySession);
     forSession(sessionId: string, region: CodeBuddyRegion, model: string): CodeBuddySession;
+    /** Drop one session (history diverged); the next request rebuilds it cold. */
     dispose(sessionId: string): void;
     /**
      * Drop every warm session, keeping the pool usable.

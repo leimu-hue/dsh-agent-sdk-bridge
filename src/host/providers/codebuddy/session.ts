@@ -25,10 +25,12 @@ import type { CodeBuddyRegion } from '../../core/brand.ts'
 import { CodeBuddyStateStore, codeBuddyCliDir, withoutCredential } from '../../infra/codebuddy-state.ts'
 import type { CodeBuddySavedUser } from '../../infra/codebuddy-state.ts'
 import { jsonSchemaToShape } from '../../core/jsonschema.ts'
-import type { CloseCause } from '../../core/lifecycle.ts'
+import type { CloseCause, PoolSession } from '../../core/lifecycle.ts'
 import { CloseGate, DEFAULT_DRAIN_MS, closeFinishReason, unrefTimer } from '../../core/lifecycle.ts'
 import type { Live } from '../../core/live.ts'
 import { readLive } from '../../core/live.ts'
+import { SessionPool } from '../../core/session-pool.ts'
+import { approximateUsage, textStreamChunks } from '../../core/text-stream.ts'
 import { bareHostToolName, isHostToolName } from '../../core/mcp-naming.ts'
 import { inertInput, withTimeout } from '../../core/async.ts'
 import { codeBuddyEnvironment, loadCodeBuddySdk } from '../../infra/sdk.ts'
@@ -1793,15 +1795,30 @@ export function renderCodeBuddyResult(blocks: unknown, images?: ResolvedImages):
   return content
 }
 
+/** One warm session plus the login region it was opened for. */
+interface RegionSlot extends PoolSession {
+  readonly region: CodeBuddyRegion
+  readonly session: CodeBuddySession
+}
+
+/** Bind a session to its region so the pool can retire it on a region switch. */
+function bindRegion(session: CodeBuddySession, region: CodeBuddyRegion): RegionSlot {
+  return {
+    sessionId: session.sessionId,
+    region,
+    session,
+    get busy(): boolean { return session.busy },
+    close(cause?: CloseCause): void { session.close(cause) },
+  }
+}
+
 /**
  * Warm sessions keyed by host session id. A region change retires the old
  * session rather than mutating one, because the CLI process was started with
  * the previous region's endpoint.
  */
 export class CodeBuddySessionManager {
-  private readonly sessions = new Map<string, { session: CodeBuddySession, region: CodeBuddyRegion }>()
-  /** Set by {@link seal}: this pool's plugin generation is gone. */
-  private sealed = false
+  private readonly pool: SessionPool<RegionSlot>
 
   /**
    * @param maxSessions - warm-session cap; read per eviction so a settings edit
@@ -1811,47 +1828,28 @@ export class CodeBuddySessionManager {
    *   testable without spawning a CLI.
    */
   constructor(
-    readonly maxSessions: Live<number>,
+    maxSessions: Live<number>,
     private readonly runtime: CodeBuddySessionRuntime = {},
     private readonly create: (sessionId: string, model: string) => CodeBuddySession =
       (sessionId, model) => new CodeBuddySession(sessionId, model, runtime),
-  ) {}
-
-  forSession(sessionId: string, region: CodeBuddyRegion, model: string): CodeBuddySession {
-    // A sealed pool belonged to a plugin generation that is gone; reviving it
-    // would spawn a CLI process nothing owns. See {@link seal}.
-    if (this.sealed) throw new LlmError('CodeBuddy 会话池已封存（插件已卸载）', 'INVALID_REQUEST')
-    const existing = this.sessions.get(sessionId)
-    if (existing !== undefined) {
-      if (existing.region !== region) {
-        existing.session.close('region')
-        this.sessions.delete(sessionId)
-      } else {
-        this.sessions.delete(sessionId)
-        this.sessions.set(sessionId, existing)
-        return existing.session
-      }
-    }
-    const session = this.create(sessionId, model)
-    this.sessions.set(sessionId, { session, region })
-    const cap = readLive(this.maxSessions, 8)
-    while (this.sessions.size > cap) {
-      // Never evict a session with a turn in flight: killing it reports the
-      // turn as a stream failure and discards an answer that was arriving.
-      const victim = [...this.sessions.entries()]
-        .find(([id, entry]) => id !== sessionId && !entry.session.busy)
-      if (victim === undefined) break
-      this.sessions.delete(victim[0])
-      victim[1].session.close('evicted')
-    }
-    return session
+  ) {
+    this.pool = new SessionPool<RegionSlot>({ label: 'CodeBuddy', maxSessions })
   }
 
+  forSession(sessionId: string, region: CodeBuddyRegion, model: string): CodeBuddySession {
+    // A region switch makes the held process answer for the other login, so it
+    // is retired rather than reused. This is the one fact the shared pool cannot
+    // infer: it only knows a session is busy or not.
+    return this.pool.forSession(
+      sessionId,
+      id => bindRegion(this.create(id, model), region),
+      slot => slot.region === region ? undefined : 'region',
+    ).session
+  }
+
+  /** Drop one session (history diverged); the next request rebuilds it cold. */
   dispose(sessionId: string): void {
-    const entry = this.sessions.get(sessionId)
-    if (entry === undefined) return
-    this.sessions.delete(sessionId)
-    entry.session.close('rebuild')
+    this.pool.dispose(sessionId)
   }
 
   /**
@@ -1863,8 +1861,7 @@ export class CodeBuddySessionManager {
    * @param cause - why the sessions go; decides how interrupted turns report.
    */
   closeAll(cause: CloseCause = 'account'): void {
-    for (const entry of this.sessions.values()) entry.session.close(cause)
-    this.sessions.clear()
+    this.pool.closeAll(cause)
   }
 
   /**
@@ -1875,11 +1872,9 @@ export class CodeBuddySessionManager {
    * outlive every owner it has.
    */
   seal(cause: CloseCause = 'dispose'): void {
-    this.sealed = true
-    this.closeAll(cause)
+    this.pool.seal(cause)
   }
 }
-
 /** A one-shot turn, used for titles and compaction summaries. */
 export async function codeBuddyColdStream(
   region: CodeBuddyRegion,
@@ -1928,10 +1923,7 @@ export async function codeBuddyColdStream(
     chunks.push({ type: 'finish', reason: { kind: 'error', failure: { message: 'CodeBuddy side-channel returned no content', code: EMPTY_RESPONSE_CODE } } })
     return chunks
   }
-  chunks.push({ type: 'block-start', index: 0, blockType: 'text' })
-  for (let i = 0; i < text.length; i += 192) chunks.push({ type: 'text-delta', index: 0, text: text.slice(i, i + 192) })
-  chunks.push({ type: 'block-end', index: 0, block: { type: 'text', text } })
-  chunks.push({ type: 'usage', usage: { inputTokens: Math.max(1, Math.ceil(prompt.length / 4)), outputTokens: Math.max(1, Math.ceil(text.length / 4)) } })
+  chunks.push(...textStreamChunks(text, approximateUsage(prompt, text)))
   chunks.push({ type: 'finish', reason: { kind: 'stop' } })
   return chunks
 }

@@ -11,7 +11,7 @@
 import { LlmAdapter } from '@deepseek-ai/dsh-llm'
 import type {
   GenerateOptions, LlmModelInfo, LlmProviderInfo, LlmResolvedModelInfo,
-  PreparedAdapterCall, RequestMessage, StreamChunk,
+  PreparedAdapterCall, StreamChunk,
 } from '@deepseek-ai/dsh-llm'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { QoderBrand } from '../../core/brand.ts'
@@ -24,18 +24,17 @@ import type { Live } from '../../core/live.ts'
 import { readLive, readLiveOptional } from '../../core/live.ts'
 import { DEFAULT_MODEL_CACHE_TTL_MS, DEFAULT_FETCH_TIMEOUT_MS, QoderModelCatalog } from './models.ts'
 import { cachedModels } from '../../core/model-cache.ts'
+import { DEFAULT_MAX_SESSIONS } from '../../core/session-pool.ts'
 import { feedImageRefs, feedToText, imageRefText, imageRefs, renderInitialFeed, renderSideChannelFeed } from '../../core/render.ts'
 import type { Feed, ImagePathResolver } from '../../core/render.ts'
-import { QoderSession, QoderSessionManager, DEFAULT_MAX_SESSIONS } from './session.ts'
-import { planContinuation, reasoningInfo, resolveImages, resolveTurnImages } from '../../core/adapter-kit.ts'
+import { QoderSession, QoderSessionManager } from './session.ts'
+import { NO_ALIASES, NO_MODELS, modelInfo, planContinuation, reasoningInfo, resolveImages, resolveTurnImages } from '../../core/adapter-kit.ts'
 import type { ImageRequestReader } from '../../core/adapter-kit.ts'
 import type { ChannelContent, ResolvedImages } from '../../core/host-session.ts'
 import type { SessionModelPolicy } from './session.ts'
 import { discardSdk } from '../../infra/sdk.ts'
 import type { UsageSnapshot } from './usage.ts'
 import { QoderUsage } from './usage.ts'
-
-
 
 /**
  * Options for {@link QoderAdapter}.
@@ -105,10 +104,8 @@ export interface QoderAdapterOptions {
   onModelsChanged?: (ids: readonly string[]) => void
 }
 
-/** Shared empty values, so an unset list or map allocates nothing per read. */
-const NO_MODELS: readonly string[] = []
+/** Shared empty value, so an unset window map allocates nothing per read. */
 const NO_WINDOWS: Readonly<Record<string, number>> = {}
-const NO_ALIASES: Readonly<Record<string, string>> = {}
 
 /** The primary provider route (the CN account's own models). */
 export const QODER_PROVIDER = 'qoder-cn'
@@ -205,18 +202,6 @@ export function resolveDeclaredWindow(
     && (available === undefined || available.length === 0 || available.includes(override))
   return pickContextWindow(live, honored ? override : undefined, remembered ?? fallback)
 }
-
-function modelInfo(provider: string, entry: { id: string, name: string, description?: string, isVl?: boolean }): LlmModelInfo {
-  return {
-    provider,
-    id: entry.id,
-    name: entry.name,
-    ...entry.description === undefined ? {} : { description: entry.description },
-    inputModalities: entry.isVl === true ? ['text' as const, 'image' as const] : ['text' as const],
-  }
-}
-
-
 
 /** One adapter dispatch generation: the metadata the harness saw, plus what it implies. */
 interface CallGeneration {
@@ -533,7 +518,15 @@ export class QoderAdapter extends LlmAdapter {
     return Promise.resolve({
       ...configured === undefined
         ? { provider, id: model, name: model }
-        : { ...modelInfo(provider, configured), id: model },
+        : {
+            ...modelInfo(provider, {
+              id: configured.id,
+              name: configured.name,
+              ...configured.description === undefined ? {} : { description: configured.description },
+              vision: configured.isVl === true,
+            }),
+            id: model,
+          },
       inputModalities: rememberedVision ? ['text' as const, 'image' as const] : ['text' as const],
       context: {
         contextWindow: this.declaredWindow(target, undefined),
@@ -614,7 +607,7 @@ export class QoderAdapter extends LlmAdapter {
       return
     }
     const tail = options.messages.slice(session.fedMessages.length)
-    const images = await this.resolveTurnImages(tail, generation.vision, options.signal)
+    const images = await resolveTurnImages(tail, generation.vision, this.readImage, options.signal)
     session.deliverToolResults(tail, images)
     const plan = planContinuation(session.fedMessages, options.messages)
     if (plan.rebuild) {
@@ -652,15 +645,6 @@ export class QoderAdapter extends LlmAdapter {
     const feed = renderInitialFeed(options.system, options.messages, this.imagePath)
     const images = await resolveImages(feedImageRefs(feed), vision, this.readImage, options.signal)
     yield* session.stream(options, await this.buildFeed(feed, vision, images), feedToText(feed, this.imagePath))
-  }
-
-  /** Image references carried by a message tail, skipping assistant content. */
-  private async resolveTurnImages(
-    tail: readonly RequestMessage[],
-    vision: boolean,
-    signal?: AbortSignal,
-  ): Promise<ResolvedImages> {
-    return await resolveTurnImages(tail, vision, this.readImage, signal)
   }
 
   /**

@@ -135,20 +135,32 @@ const RULES = `
 `
 
 /**
- * Install the state styles once, before the first render.
+ * Install the state styles, and return the disposer that removes them.
  *
- * Kept out of module scope so the bundle stays evaluable without a document,
- * and idempotent so a reloaded plugin does not stack sheets.
+ * Kept out of module scope so the bundle stays evaluable without a document.
+ * The plugin's `apply` registers the returned disposer with `ctx.effect`, so a
+ * reload or an unload takes this sheet with it instead of leaving a stale copy
+ * in the shell's head; installing again replaces the previous sheet rather than
+ * stacking a second one.
+ *
+ * @returns a disposer that removes the sheet, safe to call more than once.
  */
-export function installStyles(): void {
+export function installStyles(): () => void {
   try {
-    if (typeof document === 'undefined') return
-    if (document.getElementById(STYLE_ID) !== null) return
+    if (typeof document === 'undefined') return () => {}
+    document.getElementById(STYLE_ID)?.remove()
     const element = document.createElement('style')
     element.id = STYLE_ID
     element.textContent = RULES
     document.head.appendChild(element)
+    let removed = false
+    return () => {
+      if (removed) return
+      removed = true
+      element.remove()
+    }
   } catch {
     /* a shell with an unwritable head keeps the inline layout and default states */
+    return () => {}
   }
 }

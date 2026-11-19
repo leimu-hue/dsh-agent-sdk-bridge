@@ -14,9 +14,10 @@
  * the host's own config form. The host owns the catalog, so the page never
  * derives state the adapter does not share.
  *
- * The page can also start the CLI helper shipped with this package
- * (`POST <prefix>/setup`, then `GET <prefix>/setup` for its output): installing
- * and signing into a CLI is a local action a browser cannot perform.
+ * The page never installs a CLI: installing and signing in is a local action
+ * the user performs in a terminal, and the page only reports what the machine
+ * is missing. CodeBuddy's browser login is the one flow it starts, through
+ * `POST <prefix>/auth`.
  *
  * @module dsh-agent-sdk-bridge/client
  */
@@ -48,7 +49,9 @@ const NS = 'llm-qoder-cn'
  * registered `settings.section` is exactly what puts an entry in the nav.
  */
 export function apply(ctx: PluginContext): void {
-  installStyles()
+  // The sheet belongs to this apply: the effect removes it when the plugin is
+  // reloaded or unloaded, so the shell's head never keeps a stale copy.
+  ctx.effect(() => installStyles(), 'llm-qoder-cn: styles')
   if (ctx.locale === undefined || ctx.slots === undefined || ctx.configForms === undefined) return
   const locale = ctx.locale
   const slots = ctx.slots

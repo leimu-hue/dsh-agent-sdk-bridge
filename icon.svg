@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36" role="img" aria-label="Agent SDK Bridge">
+  <!-- One arch joining two subscription endpoints: the plugin is a bridge, not a provider. -->
+  <path d="M9.5 17.5c0-4.7 3.8-8.5 8.5-8.5s8.5 3.8 8.5 8.5" fill="none" stroke="#4C6EF5" stroke-width="2.8" stroke-linecap="round"/>
+  <rect x="6.8" y="16.2" width="5.4" height="12.4" rx="2.7" fill="#4C6EF5"/>
+  <rect x="23.8" y="16.2" width="5.4" height="12.4" rx="2.7" fill="#12B886"/>
+  <path d="M12.2 22.4h11.6" fill="none" stroke="#4C6EF5" stroke-width="2.2" stroke-linecap="round" opacity="0.55"/>
+</svg>

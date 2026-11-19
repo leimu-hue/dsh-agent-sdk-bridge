@@ -11,10 +11,9 @@
  *   CodeBuddy returns the signed-in account (its SDK exposes no quota call).
  * - `GET/POST <prefix>/auth` — CodeBuddy browser login/logout.
  *
- * Installing a provider's CLI is deliberately absent: the flags, versions and
- * postinstall scripts belong to each vendor and change with their releases, so
- * the page reports what the machine is missing and leaves installing it to the
- * user rather than pinning a command that will be wrong next month.
+ * The handler is deliberately brand-agnostic: it resolves a {@link SettingsSource}
+ * and never sees a provider adapter, so adding a route or a brand does not
+ * reintroduce a union type and a cast per branch.
  *
  * Config writes deliberately do NOT come through here. The browser half holds
  * a revision-fenced form for this plugin's namespace (`ctx.configForms`), and
@@ -24,39 +23,12 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { QoderAdapter } from '../providers/qoder/adapter.ts'
-import type { CodeBuddyAdapter } from '../providers/codebuddy/adapter.ts'
 import type { BrandId, CodeBuddyRegion } from '../core/brand.ts'
 import { isBrandId, isCodeBuddyRegion } from '../core/brand.ts'
-import { priceFactorOf } from '../providers/qoder/models.ts'
+import type { SettingsSources } from './settings-source.ts'
 
 /** Route prefix this plugin owns; the client resolves it relative to the page. */
 export const API_PREFIX = '/api/llm-qoder-cn'
-
-/** One model row as a settings page renders it. */
-export interface ModelRow {
-  id: string
-  name: string
-  description?: string
-  enabled: boolean
-  vision: boolean
-  contextWindow: number
-  contextWindows: number[]
-  defaultContextWindow: number
-  override?: number
-  priceFactor?: number
-  reasoning: boolean
-  /**
-   * Whether the provider accepts a context-budget choice for this model.
-   *
-   * Absent (Qoder) means the ordinary menu applies. `false` means the
-   * window is fixed upstream, so the page shows the value without a selector.
-   */
-  contextWindowSelectable?: boolean
-}
-
-/** The adapters the API can reach, one per provider route. */
-export type AdapterMap = Readonly<Record<BrandId, QoderAdapter | CodeBuddyAdapter>>
 
 /** Answer one request with JSON. */
 function send(res: ServerResponse, status: number, payload: unknown): void {
@@ -67,70 +39,6 @@ function send(res: ServerResponse, status: number, payload: unknown): void {
     'content-length': Buffer.byteLength(body),
   })
   res.end(body)
-}
-
-/** Build model rows for a Qoder adapter. */
-export async function buildRows(adapter: QoderAdapter): Promise<ModelRow[]> {
-  const live = await adapter.describeCatalog()
-  return live.map(entry => {
-    const override = adapter.contextWindowFor(entry.value)
-    const upstream = entry.defaultContextWindow
-      ?? (entry.availableContextWindows !== undefined && entry.availableContextWindows.length > 0
-        ? Math.max(...entry.availableContextWindows)
-        : entry.maxInputTokens)
-      ?? 200_000
-    const choices = new Set<number>(entry.availableContextWindows ?? [])
-    choices.add(upstream)
-    if (override !== undefined) choices.add(override)
-    const priceFactor = priceFactorOf(entry)
-    return {
-      id: entry.value,
-      name: entry.displayName.length > 0 ? entry.displayName : entry.value,
-      ...entry.description.length > 0 ? { description: entry.description } : {},
-      enabled: !adapter.isModelDisabled(entry.value),
-      vision: entry.isVl === true,
-      contextWindow: override ?? upstream,
-      contextWindows: [...choices].sort((a, b) => a - b),
-      defaultContextWindow: upstream,
-      ...override === undefined ? {} : { override },
-      ...priceFactor === undefined ? {} : { priceFactor },
-      reasoning: entry.isReasoning !== false,
-      // One advertised window is a fixed window: the CLI ignores anything
-      // else, so the page should show the value instead of a dead selector.
-      contextWindowSelectable: (entry.availableContextWindows?.length ?? 0) > 1,
-    }
-  })
-}
-
-/** Build model rows for the CodeBuddy adapter, for one login region. */
-export async function buildCodeBuddyRows(
-  adapter: CodeBuddyAdapter,
-  region?: CodeBuddyRegion,
-): Promise<ModelRow[]> {
-  const live = await adapter.describeCatalog(region)
-  return live.map(entry => {
-    // Only windows the provider accepts are offered. CodeBuddy validates
-    // `set_config.contextWindow` against `contextWindow.supportedLengths` and
-    // answers anything else with `Allowed: <none>`, so a menu entry the CLI
-    // refuses would be a switch that does nothing upstream.
-    const override = adapter.contextWindowFor(entry.id, region)
-    const choices = new Set<number>(entry.contextWindows)
-    if (override !== undefined) choices.add(override)
-    return {
-      id: entry.id,
-      name: entry.name,
-      ...entry.description === undefined ? {} : { description: entry.description },
-      enabled: !adapter.isModelDisabled(entry.id, region),
-      vision: entry.vision,
-      contextWindow: override ?? entry.defaultContextWindow,
-      contextWindows: [...choices].sort((a, b) => a - b),
-      defaultContextWindow: entry.defaultContextWindow,
-      ...override === undefined ? {} : { override },
-      ...entry.priceFactor === undefined ? {} : { priceFactor: entry.priceFactor },
-      reasoning: (entry.reasoningEfforts?.length ?? 0) > 0,
-      contextWindowSelectable: entry.contextWindows.length > 0,
-    }
-  })
 }
 
 /** Largest request body this route accepts. */
@@ -151,6 +59,37 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
   return JSON.parse(text)
 }
 
+/**
+ * Whether a write request came from this application.
+ *
+ * The login routes are reachable from every page on this machine (the host
+ * listens on loopback), so a plain cross-site form post could otherwise log the
+ * user out or open a login flow. The plugin's own page is same-origin and sends
+ * JSON, which a simple cross-site form cannot do without a preflight; requiring
+ * both keeps a write for the page that owns it.
+ */
+function isSameOrigin(req: IncomingMessage): boolean {
+  const site = req.headers['sec-fetch-site']
+  if (typeof site === 'string' && site !== 'same-origin' && site !== 'none') return false
+  const origin = req.headers.origin
+  if (typeof origin !== 'string' || origin.length === 0) return true
+  let host: string
+  try {
+    host = new URL(origin).host
+  } catch {
+    return false
+  }
+  const expected = req.headers.host
+  return typeof expected !== 'string' || expected.length === 0 || host === expected
+}
+
+/** A write is same-origin and in the JSON shape the plugin's own page sends. */
+function isSameOriginWrite(req: IncomingMessage): boolean {
+  if (!isSameOrigin(req)) return false
+  const type = req.headers['content-type']
+  return typeof type === 'string' && type.toLowerCase().split(';')[0]?.trim() === 'application/json'
+}
+
 /** The brand a query-string or body selected, or undefined when it named none. */
 function brandFrom(value: unknown): BrandId | undefined {
   if (value === null || value === undefined || value === '') return 'cn'
@@ -167,126 +106,129 @@ function regionFrom(value: unknown): CodeBuddyRegion | undefined {
 export async function handleApi(
   req: IncomingMessage,
   res: ServerResponse,
-  adapters: AdapterMap,
+  sources: SettingsSources,
 ): Promise<void> {
   try {
     const url = new URL(req.url ?? '/', 'http://localhost')
     const path = url.pathname.slice(API_PREFIX.length) || '/'
     const method = req.method ?? 'GET'
-    const queryBrand = brandFrom(url.searchParams.get('brand'))
+    const brand = brandFrom(url.searchParams.get('brand'))
 
-    if (queryBrand === undefined) {
+    if (brand === undefined) {
       send(res, 400, { error: 'brand 只接受 cn、global 或 codebuddy' })
       return
     }
-    const adapter = adapters[queryBrand]
-    const codebuddy = queryBrand === 'codebuddy' ? adapter as CodeBuddyAdapter : undefined
+    const source = sources[brand]
 
-    if (path === '/models' && method === 'GET') {
-      const requestedRegion = url.searchParams.get('region')
-      const region = requestedRegion === null || requestedRegion === ''
-        ? undefined
-        : regionFrom(requestedRegion)
-      if (codebuddy !== undefined && region === undefined && requestedRegion !== null && requestedRegion !== '') {
+    // A switched-off edition owns neither a route nor a page. Refusing here
+    // keeps the API from cold-starting a CLI that the user disabled.
+    if (!source.enabled()) {
+      send(res, 404, { error: '该 provider 已在插件选项中关闭' })
+      return
+    }
+
+    if (method !== 'GET' && method !== 'HEAD' && !isSameOriginWrite(req)) {
+      send(res, 403, { error: '跨站写入被拒绝' })
+      return
+    }
+
+    // A refresh re-reads the account catalog (a CLI cold start for Qoder) and
+    // bypasses the cache, so it is not a safe read to let another page trigger.
+    const fresh = url.searchParams.get('fresh') === '1'
+    if (fresh && !isSameOrigin(req)) {
+      send(res, 403, { error: '跨站刷新被拒绝' })
+      return
+    }
+
+    // A POST selects its provider in the body: the page never puts the brand in
+    // the URL for writes, so this is resolved before the URL source is used.
+    if (path === '/auth' && method === 'POST') {
+      let body: { brand?: unknown, region?: unknown, action?: unknown }
+      try {
+        body = ((await readJson(req)) ?? {}) as { brand?: unknown, region?: unknown, action?: unknown }
+      } catch (error) {
+        send(res, 400, { error: `请求体无法解析：${error instanceof Error ? error.message : String(error)}` })
+        return
+      }
+      const postBrand = brandFrom(body.brand)
+      const target = postBrand === undefined ? undefined : sources[postBrand]
+      if (target?.auth === undefined) {
+        send(res, 400, { error: '该 provider 没有浏览器登录流程' })
+        return
+      }
+      if (!target.enabled()) {
+        send(res, 404, { error: '该 provider 已在插件选项中关闭' })
+        return
+      }
+      const authRegion = regionFrom(body.region)
+      if (authRegion === undefined) {
         send(res, 400, { error: 'region 只接受 global 或 cn' })
         return
       }
-      if (url.searchParams.get('fresh') === '1') {
-        if (codebuddy !== undefined) codebuddy.invalidateCatalog(region)
-        else adapter.invalidateCatalog()
+      if (body.action !== 'login' && body.action !== 'logout') {
+        send(res, 400, { error: 'action 只接受 login 或 logout' })
+        return
       }
-      const signedIn = codebuddy?.isSignedIn(region)
-      const rows = codebuddy !== undefined
-        ? signedIn === false ? [] : await buildCodeBuddyRows(codebuddy, region)
-        : await buildRows(adapter as QoderAdapter)
-      const notice = rows.length === 0
-        ? codebuddy !== undefined ? codebuddy.catalogError(region) : adapter.catalogError()
-        : undefined
+      if (body.action === 'logout') {
+        const result = await target.auth.logout(authRegion)
+        if (!result.ok) {
+          send(res, 500, { error: result.error })
+          return
+        }
+        send(res, 200, { brand: 'codebuddy', ...target.auth.status(authRegion) as Record<string, unknown> })
+        return
+      }
+      const started = target.auth.login(authRegion)
+      if (started.started === false) {
+        send(res, 409, { error: started.error })
+        return
+      }
+      send(res, 200, { brand: 'codebuddy', ...target.auth.status(authRegion) as Record<string, unknown> })
+      return
+    }
+
+    const requestedRegion = url.searchParams.get('region')
+    const region = source.regionAware && requestedRegion !== null && requestedRegion !== ''
+      ? regionFrom(requestedRegion)
+      : undefined
+    if (source.regionAware && requestedRegion !== null && requestedRegion !== '' && region === undefined) {
+      send(res, 400, { error: 'region 只接受 global 或 cn' })
+      return
+    }
+
+    if (path === '/models' && method === 'GET') {
+      const page = await source.models({ fresh, region })
       send(res, 200, {
-        brand: queryBrand,
-        models: rows,
+        brand,
+        models: page.rows,
         // Echo the region so the page can refuse a response that belongs to
         // the other login: a harmless extra field for the Qoder brands.
-        ...region === undefined ? {} : { region },
-        ...signedIn === undefined ? {} : { signedIn },
-        ...notice === undefined ? {} : { notice },
+        ...source.regionAware && region !== undefined ? { region } : {},
+        ...page.signedIn === undefined ? {} : { signedIn: page.signedIn },
+        ...page.notice === undefined ? {} : { notice: page.notice },
       })
       return
     }
 
     if (path === '/usage' && method === 'GET') {
-      const requested = url.searchParams.get('region')
-      const region = requested === null || requested === '' ? undefined : regionFrom(requested)
-      if (codebuddy !== undefined && region === undefined && requested !== null && requested !== '') {
-        send(res, 400, { error: 'region 只接受 global 或 cn' })
-        return
-      }
-      const fresh = url.searchParams.get('fresh') === '1'
-      const snapshot = codebuddy !== undefined
-        ? await codebuddy.usageInfo(fresh, region)
-        : await adapter.usageInfo(fresh)
-      send(res, 200, {
-        brand: queryBrand,
-        ...snapshot,
-        ...codebuddy === undefined ? {} : { signedIn: codebuddy.isSignedIn(region) },
-      })
+      const snapshot = await source.usage({ fresh, region })
+      send(res, 200, { brand, ...snapshot })
       return
     }
 
     if (path === '/auth') {
-      if (method === 'GET') {
-        if (codebuddy === undefined) {
-          send(res, 404, { error: '该 provider 没有浏览器登录流程' })
-          return
-        }
-        const region = regionFrom(url.searchParams.get('region'))
-        if (region === undefined) {
-          send(res, 400, { error: 'region 只接受 global 或 cn' })
-          return
-        }
-        send(res, 200, { brand: 'codebuddy', ...codebuddy.authStatus(region) })
+      const auth = source.auth
+      if (auth === undefined) {
+        send(res, 404, { error: '该 provider 没有浏览器登录流程' })
         return
       }
-      if (method === 'POST') {
-        let body: { brand?: unknown, region?: unknown, action?: unknown }
-        try {
-          body = ((await readJson(req)) ?? {}) as { brand?: unknown, region?: unknown, action?: unknown }
-        } catch (error) {
-          send(res, 400, { error: `请求体无法解析：${error instanceof Error ? error.message : String(error)}` })
-          return
-        }
-        // A POST selects its provider in the body: the page never puts the
-        // brand in the URL for writes.
-        const postBrand = brandFrom(body.brand)
-        if (postBrand !== 'codebuddy') {
-          send(res, 400, { error: '该 provider 没有浏览器登录流程' })
-          return
-        }
-        const region = regionFrom(body.region)
-        if (region === undefined) {
+      if (method === 'GET') {
+        const authRegion = regionFrom(url.searchParams.get('region'))
+        if (authRegion === undefined) {
           send(res, 400, { error: 'region 只接受 global 或 cn' })
           return
         }
-        if (body.action !== 'login' && body.action !== 'logout') {
-          send(res, 400, { error: 'action 只接受 login 或 logout' })
-          return
-        }
-        const cb = adapters.codebuddy as CodeBuddyAdapter
-        if (body.action === 'logout') {
-          const result = await cb.logout(region)
-          if (!result.ok) {
-            send(res, 500, { error: result.error })
-            return
-          }
-          send(res, 200, { brand: 'codebuddy', ...cb.authStatus(region) })
-          return
-        }
-        const started = cb.startLogin(region)
-        if (started.started === false) {
-          send(res, 409, { error: started.error })
-          return
-        }
-        send(res, 200, { brand: 'codebuddy', ...cb.authStatus(region) })
+        send(res, 200, { brand, ...auth.status(authRegion) as Record<string, unknown> })
         return
       }
     }

@@ -12,7 +12,7 @@ import { CloseGate, DEFAULT_DRAIN_MS, closeFinishReason } from '../../src/host/c
 
 describe('close finish reason', () => {
   it('reports every host-initiated close as aborted, never as a stream error', () => {
-    for (const cause of ['dispose', 'evicted', 'idle', 'account', 'region', 'rebuild'] as const) {
+    for (const cause of ['dispose', 'evicted', 'account', 'region', 'rebuild'] as const) {
       const reason = closeFinishReason(cause)
       expect(reason.kind).toBe('aborted')
       // `ABORTED` is the code dsh-llm itself maps to `kind: 'aborted'`, and it
@@ -24,11 +24,11 @@ describe('close finish reason', () => {
 
   it('names the actual cause instead of a generic message', () => {
     const messages = new Set(
-      (['dispose', 'evicted', 'idle', 'account', 'region', 'rebuild'] as const)
+      (['dispose', 'evicted', 'account', 'region', 'rebuild'] as const)
         .map(cause => closeFinishReason(cause))
         .map(reason => reason.kind === 'aborted' ? reason.failure.message : ''),
     )
-    expect(messages.size).toBe(6)
+    expect(messages.size).toBe(5)
     expect([...messages].every(message => message.length > 0)).toBe(true)
   })
 })
@@ -83,7 +83,7 @@ describe('close gate', () => {
 
   it('tears down exactly once when the turn settles after the forced close', () => {
     const subject = gate(10)
-    subject.request('idle', true)
+    subject.request('evicted', true)
     vi.advanceTimersByTime(10)
     subject.settled()
     expect(teardowns).toBe(1)

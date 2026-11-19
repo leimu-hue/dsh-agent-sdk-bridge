@@ -1,125 +1,44 @@
 /**
- * Register one adapter per provider on `ctx.llm`: `qoder-cn` and `qoder-intl`
- * backed by Qoder's CN and international Agent SDKs, and `codebuddy` backed by
- * Tencent's CodeBuddy Agent SDK.
+ * The plugin entry: what DSH calls to mount the bridge.
  *
- * Each provider's inner sessions ride on its own local login state (the Qoder
- * CLIs, or CodeBuddy's bundled CLI), so no API key or credential entry is
- * required: the account's model catalog is fetched live and split into the
- * account's built-in models and its custom ones. Everything a deployment may
- * want to tune — session pool size, context window, timeouts, model allow/deny
- * lists, aliases, per provider — is declared in {@link Config}, which DSH
- * renders as this plugin's settings pages.
+ * This module answers one question — how the harness mounts a plugin — and
+ * delegates the two substantial answers next to it. {@link createBridge} owns
+ * the provider adapters, the routes and picker groups that follow the edition
+ * switches, and the warm-session teardown; `surface/api.ts` owns the settings
+ * pages' HTTP reads. What remains here is the plugin contract itself: the
+ * `name`/`inject`/`Config`/`apply` exports the loader reads, one counter that
+ * makes an entry rebuild visible in the trace log, and the two mounts.
  *
- * ## Settings edits apply without a restart, and that shapes this module
+ * ## Settings edits apply without a restart, and that shapes the wiring
  *
  * Every config field is volatile, and DSH commits a volatile-only edit into the
  * running plugin's config cells instead of restarting it — `apply()` is not
- * called again. The adapter is therefore handed {@link liveConfig} thunks and
- * reads each value where it uses it; the only thing captured at mount is the
- * picker-directory registration (`directoryFor`), which is republished through
- * its `replace` handle when the display name changes.
- * See `src/core/live.ts` for the mechanism.
+ * called again. The bridge is therefore handed {@link liveConfig} thunks and
+ * reads each value where it uses it; see `src/core/live.ts` for the mechanism.
  *
  * @module dsh-agent-sdk-bridge
  */
+import './core/events.ts';
 import type { Context } from '@deepseek-ai/cordis';
-import type { ServerResponse, IncomingMessage } from 'node:http';
-import type { ParsedConfig } from './core/config.ts';
-/**
- * The web carrier this plugin mounts its settings API on.
- *
- * Declared locally rather than imported from `@deepseek-ai/dsh-host-webserver`
- * so the plugin keeps only the peer dependencies it actually needs: a
- * deployment that boots without a web server must still load this plugin, and
- * an import of the carrier package would make it a hard requirement.
- */
-interface WebServerService {
-    register(route: {
-        kind: 'exact' | 'prefix';
-        path: string;
-        handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
-    }): () => void;
-}
-/**
- * The mounted filesystem provider, used only to translate a host path into
- * the execution world the host tools run in. Declared minimally so the plugin
- * keeps only the peer dependencies it actually needs.
- */
-interface FileSystemService {
-    processPathFromHostPath?(hostPath: string): string | undefined;
-}
-declare module '@deepseek-ai/cordis' {
-    interface Context {
-        /** Present only in web compositions; reached through a nested inject. */
-        webServer?: WebServerService;
-        /** Present when a filesystem provider is mounted; reached by inject. */
-        fs?: FileSystemService;
-    }
-    interface Events {
-        /**
-         * The loader committed a volatile-only config edit into this fiber.
-         *
-         * Emitted by `cordis-plugin-loader` from `Entry._commitVolatile` with the
-         * config paths whose cells changed. The plugin does not restart for such an
-         * edit, so this is the only notification that one happened; see
-         * `src/core/live.ts`. Declared here because it is an internal loader event that
-         * the framework's own `Events` interface does not carry.
-         *
-         * @param paths - one path array per committed field, e.g. `[['displayName']]`.
-         */
-        'loader/volatile-update'(paths: readonly (readonly string[])[]): void;
-        /**
-         * One provider's advertised models or display metadata changed.
-         *
-         * The host forwards it to every connected GUI, whose model picker reloads
-         * the catalog. Declared here because the `@deepseek-ai/dsh-llm` version this
-         * plugin compiles against predates the event, while the harnesses it runs
-         * on (0.2.2-rc.5 and later) declare and dispatch it; emitting an event a
-         * slightly older host does not know is harmless — nothing listens.
-         *
-         * @param provider - the route whose catalog changed.
-         */
-        'llm/models-updated'(provider: string): void;
-    }
-}
-export { QoderAdapter, QODER_PROVIDER, QODER_INTL_PROVIDER, cliContextWindow, pickContextWindow } from './providers/qoder/adapter.ts';
-export type { ImageRequestReader } from './core/adapter-kit.ts';
+import type { Config as ConfigShape, LiveConfig, ParsedConfig, ResolvedConfig } from './core/config.ts';
+export { QODER_PROVIDER, QODER_INTL_PROVIDER, QoderAdapter } from './providers/qoder/adapter.ts';
 export type { QoderAdapterOptions } from './providers/qoder/adapter.ts';
-export { CodeBuddyAdapter, CODEBUDDY_PROVIDER, resolveCodeBuddyModelId } from './providers/codebuddy/adapter.ts';
+export { CODEBUDDY_PROVIDER, CodeBuddyAdapter, resolveCodeBuddyModelId } from './providers/codebuddy/adapter.ts';
 export type { CodeBuddyAdapterOptions } from './providers/codebuddy/adapter.ts';
-export { CodeBuddyAuth, CodeBuddyAccountReader, CodeBuddyCatalog, CodeBuddySession, CodeBuddySessionManager, CODEBUDDY_DEFAULT_CONTEXT_WINDOW, CODEBUDDY_DEFAULT_MAX_TOKENS, codeBuddyColdStream, fetchCodeBuddyQuota, parseCodeBuddyQuota, toCodeBuddyModel, } from './providers/codebuddy/session.ts';
-export type { CodeBuddyAccount, CodeBuddyAuthStatus, CodeBuddyModel, CodeBuddyQuota, CodeBuddyQuotaPackage, CodeBuddyUsageSnapshot, } from './providers/codebuddy/session.ts';
-export { BRANDS, CN_BRAND, GLOBAL_BRAND, CODEBUDDY_BRAND, brandProfile, codeBuddyEnvironment, isBrandId } from './core/brand.ts';
-export type { BrandId, BrandProfile, CodeBuddyRegion, QoderBrand } from './core/brand.ts';
-export { loadCodeBuddySdk, loadSdk } from './infra/sdk.ts';
-export { QoderUsage, DEFAULT_USAGE_CACHE_TTL_MS, DEFAULT_USAGE_TIMEOUT_MS } from './providers/qoder/usage.ts';
-export type { UsageSnapshot } from './providers/qoder/usage.ts';
-export { QoderSession, QoderSessionManager } from './providers/qoder/session.ts';
-export type { SessionModelPolicy, SessionRuntimeOptions } from './providers/qoder/session.ts';
-export { ToolResultPairing } from './core/host-session.ts';
-export { CloseGate, DEFAULT_DRAIN_MS, DEFAULT_SESSION_IDLE_MS, closeFinishReason } from './core/lifecycle.ts';
-export type { CloseCause, PoolSession } from './core/lifecycle.ts';
-export { NARROW_CHARS_PER_TOKEN, WIDE_CHARS_PER_TOKEN, countWideChars, estimateTextTokens, isWideChar } from './core/tokens.ts';
-export { QODER_MODELS, MODEL_ALIASES, resolveQoderModelId, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_TOKENS } from './core/catalog.ts';
-export { QoderModelCatalog, priceFactorOf } from './providers/qoder/models.ts';
-export { API_PREFIX, buildRows, handleApi } from './surface/api.ts';
+export type { ImageRequestReader } from './core/adapter-kit.ts';
 export type { Live } from './core/live.ts';
-export { readLive, readLiveOptional } from './core/live.ts';
 export { liveConfig } from './core/config.ts';
-export type { Config as ConfigShape, LiveConfig, ParsedConfig, ResolvedConfig, } from './core/config.ts';
-/** Cordis plugin name; must match the `id` used by `cordis.patch.yml`. */
+export type { ConfigShape, LiveConfig, ParsedConfig, ResolvedConfig };
+export { API_PREFIX } from './surface/api.ts';
+/**
+ * Cordis plugin name; equals the profile row id this bundle inserts.
+ *
+ * @see SETTINGS_NS
+ */
 export declare const name = "llm-qoder-cn";
 /** The LLM registry must exist before an adapter can be registered on it. */
 export declare const inject: string[];
-/**
- * The plugin's configuration schema, re-exported under the name the loader
- * looks for. DSH reads `runtime.Config` off the plugin fiber to build the
- * settings page, so this must stay the exported `Config` binding.
- *
- * Every field is `.volatile()`, which is what makes the namespace appear in
- * `settings.describe()` at all — see the note on {@link ConfigSchema}.
- */
+/** The plugin's configuration schema, under the name the loader looks for. */
 export declare const Config: import("@deepseek-ai/schemastery").default<Schemastery.ObjectS<NoInfer<{
     cnEnabled: import("@deepseek-ai/schemastery").default<boolean, boolean, "volatile-defined">;
     intlEnabled: import("@deepseek-ai/schemastery").default<boolean, boolean, "volatile-defined">;
@@ -180,11 +99,11 @@ export declare const Config: import("@deepseek-ai/schemastery").default<Schemast
     coldMaxTurns: import("@deepseek-ai/schemastery").default<number, number, "volatile-defined">;
 }>>, "plain">;
 /**
- * Mount the adapter for the lifetime of the plugin.
+ * Mount the adapters and the settings API for the lifetime of the plugin.
  *
  * @param ctx - the plugin's cordis context.
  * @param config - parsed plugin config, whose volatile fields arrive as
- *   references. {@link liveConfig} wraps them as thunks the adapter reads where
+ *   references. {@link liveConfig} wraps them as thunks the bridge reads where
  *   it uses them, so an edit applies without this function running again; an
  *   empty object is a valid deployment.
  */

@@ -323,6 +323,29 @@ export function liveConfig(config: ParsedConfig | undefined): LiveConfig {
     return isVolatile(value) ? value.get() : value
   }
 
+  /**
+   * One field, rebuilt only when its raw value changes identity.
+   *
+   * The list/map normalizers below allocate a fresh array or object, and a
+   * consumer that memoizes on identity (the adapters' deny-list caches) would
+   * otherwise miss on every read. The raw cell value changes identity exactly
+   * when the loader commits an edit, so the derived value is stable between
+   * edits and still fresh after one.
+   */
+  const memoField = <T>(key: keyof Config, build: (raw: unknown) => T): (() => T) => {
+    let seen: unknown
+    let value: T
+    let primed = false
+    return () => {
+      const raw = field(key)
+      if (primed && raw === seen) return value
+      seen = raw
+      value = build(raw)
+      primed = true
+      return value
+    }
+  }
+
   return {
     cnEnabled: () => bool(field('cnEnabled'), true),
     intlEnabled: () => bool(field('intlEnabled'), true),
@@ -338,24 +361,24 @@ export function liveConfig(config: ParsedConfig | undefined): LiveConfig {
     disposeDrainMs: () => nonNegative(field('disposeDrainSeconds'), 120) * 1_000,
     traceEnabled: () => bool(field('traceEnabled'), true),
     coldMaxTurns: () => positive(field('coldMaxTurns'), 4),
-    disabledModels: () => stringList(field('disabledModels')),
-    modelContextWindows: () => numberMap(field('modelContextWindows')),
-    modelAliases: () => stringMap(field('modelAliases')),
+    disabledModels: memoField('disabledModels', stringList),
+    modelContextWindows: memoField('modelContextWindows', numberMap),
+    modelAliases: memoField('modelAliases', stringMap),
     defaultReasoningEffort: () => {
       const raw = field('defaultReasoningEffort')
       const effort = typeof raw === 'string' ? raw.trim() : ''
       return effort.length > 0 ? effort : undefined
     },
     intlDisplayName: () => nonEmpty(field('intlDisplayName'), 'Qoder 国际版'),
-    intlDisabledModels: () => stringList(field('intlDisabledModels')),
-    intlModelContextWindows: () => numberMap(field('intlModelContextWindows')),
-    intlModelAliases: () => stringMap(field('intlModelAliases')),
+    intlDisabledModels: memoField('intlDisabledModels', stringList),
+    intlModelContextWindows: memoField('intlModelContextWindows', numberMap),
+    intlModelAliases: memoField('intlModelAliases', stringMap),
     codebuddyDisplayName: () => nonEmpty(field('codebuddyDisplayName'), 'CodeBuddy'),
-    codebuddyGlobalDisabledModels: () => stringList(field('codebuddyGlobalDisabledModels')),
-    codebuddyCnDisabledModels: () => stringList(field('codebuddyCnDisabledModels')),
-    codebuddyGlobalModelContextWindows: () => numberMap(field('codebuddyGlobalModelContextWindows')),
-    codebuddyCnModelContextWindows: () => numberMap(field('codebuddyCnModelContextWindows')),
-    codebuddyModelAliases: () => stringMap(field('codebuddyModelAliases')),
+    codebuddyGlobalDisabledModels: memoField('codebuddyGlobalDisabledModels', stringList),
+    codebuddyCnDisabledModels: memoField('codebuddyCnDisabledModels', stringList),
+    codebuddyGlobalModelContextWindows: memoField('codebuddyGlobalModelContextWindows', numberMap),
+    codebuddyCnModelContextWindows: memoField('codebuddyCnModelContextWindows', numberMap),
+    codebuddyModelAliases: memoField('codebuddyModelAliases', stringMap),
   }
 }
 

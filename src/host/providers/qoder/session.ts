@@ -24,6 +24,8 @@ import type { CloseCause } from '../../core/lifecycle.ts'
 import { CloseGate, DEFAULT_DRAIN_MS, closeFinishReason } from '../../core/lifecycle.ts'
 import type { Live } from '../../core/live.ts'
 import { readLive } from '../../core/live.ts'
+import { DEFAULT_MAX_SESSIONS, SessionPool } from '../../core/session-pool.ts'
+import { approximateUsage, textStreamChunks } from '../../core/text-stream.ts'
 import { trace } from '../../infra/log.ts'
 import { bareHostToolName } from '../../core/mcp-naming.ts'
 import { feedImageRefs, feedTextLength, feedWideCharCount, renderInitialFeed } from '../../core/render.ts'
@@ -48,8 +50,6 @@ const MCP_TOOL_PREFIX = `mcp__${MCP_SERVER_NAME}__`
 const DEFAULT_TOOL_RESULT_TIMEOUT_MS = 120_000
 /** How long the inner process gets to acknowledge an abort before the turn is force-ended. */
 const DEFAULT_ABORT_GRACE_MS = 5_000
-/** Warm sessions kept alive when the deployment names no cap. */
-export const DEFAULT_MAX_SESSIONS = 8
 /** Inner turns allowed for one side-channel (title, compaction) request. */
 const DEFAULT_COLD_MAX_TURNS = 4
 
@@ -1236,9 +1236,7 @@ export function isImageAttachFailure(detail: string): boolean {
  * one-shot path for side-channel requests (titles, compaction).
  */
 export class QoderSessionManager {
-  private readonly sessions = new Map<string, QoderSession>()
-  /** Set by {@link seal}: this pool's plugin generation is gone. */
-  private sealed = false
+  private readonly pool: SessionPool<QoderSession>
 
   /**
    * @param maxSessions - warm-session cap; read per eviction so a settings edit
@@ -1248,46 +1246,22 @@ export class QoderSessionManager {
    *   sealing rules are testable without spawning a CLI.
    */
   constructor(
-    readonly maxSessions: Live<number> = DEFAULT_MAX_SESSIONS,
+    maxSessions: Live<number> = DEFAULT_MAX_SESSIONS,
     private readonly runtime: SessionRuntimeOptions & { coldMaxTurns?: Live<number> } = {},
     private readonly create: (sessionId: string, model: string) => QoderSession =
       (sessionId, model) => new QoderSession(sessionId, model, runtime),
-  ) {}
+  ) {
+    this.pool = new SessionPool<QoderSession>({ label: 'qoder', maxSessions })
+  }
 
   /** Existing or fresh warm session for one host session id. */
   forSession(sessionId: string, model: string): QoderSession {
-    // A sealed pool belonged to a plugin generation that is gone. Reviving it
-    // would spawn a subprocess nothing will ever close: the harness can still
-    // hold a `prepareCall()` generation from before the reload and retry its
-    // step through this adapter. See {@link seal}.
-    if (this.sealed) throw new LlmError('qoder 会话池已封存（插件已卸载）', 'INVALID_REQUEST')
-    const existing = this.sessions.get(sessionId)
-    if (existing !== undefined) {
-      this.sessions.delete(sessionId)
-      this.sessions.set(sessionId, existing)
-      return existing
-    }
-    const session = this.create(sessionId, model)
-    this.sessions.set(sessionId, session)
-    const cap = readLive(this.maxSessions, DEFAULT_MAX_SESSIONS)
-    while (this.sessions.size > cap) {
-      // Never evict a session with a turn in flight: killing it reports the
-      // turn as a stream failure and throws away an answer that was arriving.
-      const victim = [...this.sessions.entries()]
-        .find(([id, candidate]) => id !== sessionId && !candidate.busy)
-      if (victim === undefined) break
-      this.sessions.delete(victim[0])
-      victim[1].close('evicted')
-    }
-    return session
+    return this.pool.forSession(sessionId, id => this.create(id, model))
   }
 
   /** Drop one session (history diverged); the next request rebuilds it cold. */
   dispose(sessionId: string): void {
-    const session = this.sessions.get(sessionId)
-    if (session === undefined) return
-    this.sessions.delete(sessionId)
-    session.close('rebuild')
+    this.pool.dispose(sessionId)
   }
 
   /**
@@ -1299,8 +1273,7 @@ export class QoderSessionManager {
    * @param cause - why the sessions go; decides how interrupted turns report.
    */
   closeAll(cause: CloseCause = 'account'): void {
-    for (const session of this.sessions.values()) session.close(cause)
-    this.sessions.clear()
+    this.pool.closeAll(cause)
   }
 
   /**
@@ -1311,8 +1284,7 @@ export class QoderSessionManager {
    * spawn a fresh subprocess that nothing owns afterwards.
    */
   seal(cause: CloseCause = 'dispose'): void {
-    this.sealed = true
-    this.closeAll(cause)
+    this.pool.seal(cause)
   }
 
 
@@ -1387,18 +1359,7 @@ export class QoderSessionManager {
         }
         return
       }
-      yield { type: 'block-start', index: 0, blockType: 'text' }
-      for (let i = 0; i < text.length; i += 192) {
-        yield { type: 'text-delta', index: 0, text: text.slice(i, i + 192) }
-      }
-      yield { type: 'block-end', index: 0, block: { type: 'text', text } }
-      yield {
-        type: 'usage',
-        usage: {
-          inputTokens: Math.max(1, Math.ceil(prompt.length / 4)),
-          outputTokens: Math.max(1, Math.ceil(text.length / 4)),
-        },
-      }
+      for (const chunk of textStreamChunks(text, approximateUsage(prompt, text))) yield chunk
       yield { type: 'finish', reason: { kind: 'stop' } }
     } finally {
       signal?.removeEventListener('abort', onAbort)

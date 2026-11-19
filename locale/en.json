@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Agent SDK Bridge",
+    "description": "Adds Qoder CN, Qoder International and CodeBuddy subscription models to DeepSeek Harness through each provider's own SDK and local CLI login, with quota cards, per-model switches and a context-window choice. Open Settings → Qoder CN, Settings → Qoder International or Settings → CodeBuddy; no API key is required. The plugin reuses the CLI session on this machine and does not store credentials or install a CLI. Turning an edition off in the plugin's own options removes its settings page, model group and provider route."
+  }
+}

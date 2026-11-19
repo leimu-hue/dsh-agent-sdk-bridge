@@ -9,6 +9,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import type { CloseCause } from '../../src/host/core/lifecycle.ts'
+import { SessionPool } from '../../src/host/core/session-pool.ts'
 import { QoderSessionManager } from '../../src/host/providers/qoder/session.ts'
 import type { QoderSession } from '../../src/host/providers/qoder/session.ts'
 import { CodeBuddySessionManager } from '../../src/host/providers/codebuddy/session.ts'
@@ -143,5 +144,31 @@ describe('codebuddy session pool', () => {
     pool.seal('dispose')
     expect(() => pool.forSession('a', 'global', 'model')).toThrow(/封存/)
     expect(created).toHaveLength(1)
+  })
+})
+
+describe('shared session pool', () => {
+  it('retires a session its stale hook rejects and builds a replacement', () => {
+    const created: FakeSession[] = []
+    const pool = new SessionPool<FakeSession>({ label: 'test', maxSessions: 4 })
+    const first = pool.forSession('a', id => {
+      const fake = new FakeSession(id)
+      created.push(fake)
+      return fake
+    })
+    const second = pool.forSession('a', id => {
+      const fake = new FakeSession(id)
+      created.push(fake)
+      return fake
+    }, () => 'region')
+    expect(second).not.toBe(first)
+    expect(first.closedWith).toBe('region')
+    expect(created).toHaveLength(2)
+  })
+
+  it('names its own label in the sealed-pool error', () => {
+    const pool = new SessionPool<FakeSession>({ label: 'demo', maxSessions: 1 })
+    pool.seal()
+    expect(() => pool.forSession('a', id => new FakeSession(id))).toThrow(/demo 会话池已封存/)
   })
 })
