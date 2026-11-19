@@ -39,6 +39,7 @@ function stubContext() {
     directory: [] as { provider: string, displayName: string }[],
     replaced: [] as unknown[],
     volatileListener: undefined as undefined | ((paths: readonly (readonly string[])[]) => void),
+    emitted: [] as { event: string, args: unknown[] }[],
   }
   /**
    * A registration handle, as the real registry returns it: callable to
@@ -83,6 +84,7 @@ function stubContext() {
     },
     inject: () => {},
     effect: (fn: () => unknown) => fn(),
+    emit: (event: string, ...args: unknown[]) => { recorded.emitted.push({ event, args }) },
     on: (event: string, listener: any) => {
       if (event === 'loader/volatile-update') recorded.volatileListener = listener
     },
@@ -146,6 +148,34 @@ describe('live config', () => {
     recorded.replaced.length = 0
     recorded.volatileListener?.([['disabledModels']])
     expect(recorded.replaced).toEqual([])
+  })
+
+  it('tells the harness when an edition advertises a different model list', async () => {
+    const mounted = parse({})
+    const { ctx, recorded } = stubContext()
+    apply(ctx as any, mounted as any)
+
+    // The global edition's catalog normally comes from its CLI; replace that
+    // read so only the announce path runs.
+    const catalog = (recorded.adapters[1] as any).catalog
+    const entry = {
+      value: 'qmodel', displayName: 'QModel', description: '',
+      isVl: false, isEnabled: true, source: 'system',
+      maxInputTokens: 200_000, defaultContextWindow: 200_000,
+      availableContextWindows: [200_000],
+    }
+    Object.assign(catalog, { fetch: async () => [entry] })
+
+    await catalog.liveModels()
+    expect(recorded.emitted).toEqual([
+      { event: 'llm/models-updated', args: [QODER_INTL_PROVIDER] },
+    ])
+
+    // Re-reading the same list is not worth making every GUI reload its whole
+    // catalog, so the notification is per change and not per read.
+    catalog.invalidate()
+    await catalog.liveModels()
+    expect(recorded.emitted).toHaveLength(1)
   })
 
   it('registers only the providers that are switched on', () => {

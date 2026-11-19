@@ -31,10 +31,19 @@ export interface UsageCardProps {
   brand: Brand
   /** Bumped when the page needs the stored reading re-validated. */
   refreshSignal: number
+  /**
+   * Re-read the whole account, when the page can.
+   *
+   * The quota and the model list come from two routes and the quota is the fast
+   * one, so a quota-only refresh left the page showing the new numbers beside
+   * the previous account's models. When the page supplies this, both buttons
+   * ask for the account instead of only the quota.
+   */
+  onRefresh?: () => void
 }
 
 /** Account quota and usage, read through the CLI. */
-export function UsageCard({ t, brand, refreshSignal }: UsageCardProps): ReactElement {
+export function UsageCard({ t, brand, refreshSignal, onRefresh }: UsageCardProps): ReactElement {
   const [snapshot, setSnapshot] = useState<UsageSnapshot | undefined>(() => readCache<UsageSnapshot>(brand.id, 'usage'))
   const [failure, setFailure] = useState<string | undefined>(undefined)
   const [busy, setBusy] = useState(false)
@@ -77,9 +86,27 @@ export function UsageCard({ t, brand, refreshSignal }: UsageCardProps): ReactEle
     }
   }, [brand.id, t])
 
-  // `refreshSignal` changes when the account behind the reading may have
-  // changed, which is the one case where a cached reading is worth re-reading.
-  useEffect(() => { void load() }, [load, refreshSignal])
+  // `refreshSignal` changes when the page's refresh asks the whole account to
+  // be re-read, so that pass must not be served from the cached reading: a
+  // login performed in between would otherwise keep showing the signed-out
+  // answer for up to the cache TTL.
+  useEffect(() => { void load(refreshSignal > 0) }, [load, refreshSignal])
+
+  /**
+   * Re-read the account: the page's action when it has one, otherwise this
+   * card's own quota read.
+   *
+   * Both buttons use it. A quota failure is how a not-yet-signed-in CLI shows
+   * up here, so retrying only the quota would leave the model list — the thing
+   * the user is about to look for — exactly as stale as before.
+   */
+  const requestRefresh = useCallback(() => {
+    if (onRefresh === undefined) {
+      void load(true)
+      return
+    }
+    onRefresh()
+  }, [load, onRefresh])
 
   const usage = snapshot?.usage
   const account = snapshot?.account
@@ -100,7 +127,7 @@ export function UsageCard({ t, brand, refreshSignal }: UsageCardProps): ReactEle
         className={CLASS.button}
         style={{ ...css.btn, marginLeft: 'auto' }}
         disabled={busy}
-        onClick={() => void load(true)}
+        onClick={requestRefresh}
       >
         {busy ? t('refreshing') : t('usageRefresh')}
       </button>
@@ -125,7 +152,7 @@ export function UsageCard({ t, brand, refreshSignal }: UsageCardProps): ReactEle
           ? null
           : (
               <div style={css.bar}>
-                <button type="button" className={CLASS.button} style={css.btn} disabled={busy} onClick={() => void load(true)}>
+                <button type="button" className={CLASS.button} style={css.btn} disabled={busy} onClick={requestRefresh}>
                   {t('usageRetry')}
                 </button>
               </div>

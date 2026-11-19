@@ -39,7 +39,7 @@ vi.mock('../../../src/host/infra/cli.ts', async importOriginal => {
  * The catalogue constant is taken from the same graph as the class, so an
  * identity assertion compares the very array the class would return.
  */
-async function fresh(installed: boolean): Promise<{
+async function fresh(installed: boolean, onChange?: (ids: readonly string[]) => void): Promise<{
   catalog: import('../../../src/host/providers/qoder/models.ts').QoderModelCatalog
   fallback: typeof import('../../../src/host/providers/qoder/models.ts').emptyCatalogFallback
   plan: readonly { id: string }[]
@@ -51,7 +51,7 @@ async function fresh(installed: boolean): Promise<{
     import('../../../src/host/core/catalog.ts'),
   ])
   return {
-    catalog: new models.QoderModelCatalog('cn', 60_000, 1_000),
+    catalog: new models.QoderModelCatalog('cn', 60_000, 1_000, onChange),
     fallback: models.emptyCatalogFallback,
     plan: catalog.QODER_MODELS,
   }
@@ -129,5 +129,99 @@ describe('Qoder model list after a sign-out', () => {
     stubRead(catalog, async () => { throw new Error('network down') })
     await catalog.liveModels()
     await expect(catalog.models()).resolves.toEqual([])
+  })
+})
+
+/**
+ * The chat picker caches one catalog per Host generation and only reloads it
+ * when the Host says the advertised list changed. These cases pin when this
+ * plugin says so: a real change, once, and never for a refresh that answered
+ * the same list (every connected GUI pays a full catalog reload for it).
+ */
+describe('Qoder catalog change notification', () => {
+  /** Replace the private CLI read, leaving the announce logic under test. */
+  function stubRead(catalog: object, read: () => Promise<readonly any[]>): void {
+    Object.assign(catalog, { fetch: read })
+  }
+
+  /** One live entry, complete enough for the signature and the filter. */
+  function entry(value: string, displayName = value): any {
+    return {
+      value,
+      displayName,
+      description: '',
+      isVl: false,
+      isEnabled: true,
+      source: 'system',
+      maxInputTokens: 200_000,
+      defaultContextWindow: 200_000,
+      availableContextWindows: [200_000],
+    }
+  }
+
+  it('announces the first list the picker has not seen', async () => {
+    const seen: string[][] = []
+    const { catalog } = await fresh(true, ids => seen.push([...ids]))
+    stubRead(catalog, async () => [entry('qm1')])
+    await catalog.liveModels()
+    expect(seen).toEqual([['qm1']])
+  })
+
+  it('stays quiet when a refresh answers the same list', async () => {
+    const seen: string[][] = []
+    const { catalog } = await fresh(true, ids => seen.push([...ids]))
+    stubRead(catalog, async () => [entry('qm1')])
+    await catalog.liveModels()
+    catalog.invalidate()
+    stubRead(catalog, async () => [entry('qm1')])
+    await catalog.liveModels()
+    expect(seen).toEqual([['qm1']])
+  })
+
+  it('announces a model the account gained after a login', async () => {
+    const seen: string[][] = []
+    const { catalog } = await fresh(true, ids => seen.push([...ids]))
+    stubRead(catalog, async () => [entry('qm1')])
+    await catalog.liveModels()
+    // The account was empty before; the picker was told about that list.
+    catalog.invalidate()
+    stubRead(catalog, async () => [entry('qm1'), entry('qm2')])
+    await catalog.liveModels()
+    expect(seen).toEqual([['qm1'], ['qm1', 'qm2']])
+  })
+
+  it('announces an emptied list so the picker drops the models', async () => {
+    const seen: string[][] = []
+    const { catalog } = await fresh(true, ids => seen.push([...ids]))
+    stubRead(catalog, async () => [entry('qm1')])
+    await catalog.liveModels()
+    catalog.invalidate()
+    stubRead(catalog, async () => [])
+    await catalog.liveModels()
+    expect(seen).toEqual([['qm1'], []])
+  })
+
+  it('stays quiet when a failed refresh keeps the published list', async () => {
+    const seen: string[][] = []
+    const { catalog } = await fresh(true, ids => seen.push([...ids]))
+    stubRead(catalog, async () => [entry('qm1')])
+    await catalog.liveModels()
+    catalog.invalidate()
+    stubRead(catalog, async () => { throw new Error('network down') })
+    await catalog.liveModels()
+    expect(seen).toEqual([['qm1']])
+  })
+
+  it('ignores account-added models, which this route never advertises', async () => {
+    const seen: string[][] = []
+    const { catalog } = await fresh(true, ids => seen.push([...ids]))
+    stubRead(catalog, async () => [entry('qm1')])
+    await catalog.liveModels()
+    catalog.invalidate()
+    // A bring-your-own-key entry is filtered out before the picker sees it, so
+    // it is not a change to what this route advertises.
+    stubRead(catalog, async () => [entry('qm1'), { ...entry('byok'), source: 'user' }])
+    await catalog.liveModels()
+    expect(seen).toEqual([['qm1']])
   })
 })

@@ -17,6 +17,8 @@ import { afterAll, describe, expect, it, vi } from 'vitest'
 const fake = vi.hoisted(() => ({
   calls: [] as { environment: string, env?: Record<string, string> }[],
   failReads: false,
+  /** Extra entries the next read answers, to make the list change. */
+  extra: [] as string[],
 }))
 
 // The CLI directory override is read per session, so it is enough to set it
@@ -34,7 +36,10 @@ vi.mock('../../../src/host/infra/sdk.ts', () => ({
         connect: async () => {},
         getAvailableModelsRaw: async () => {
           if (fake.failReads) throw new Error('CLI is gone')
-          return [{ id: `${options.environment}-model`, name: 'Model' }]
+          return [
+            { id: `${options.environment}-model`, name: 'Model' },
+            ...fake.extra.map(id => ({ id, name: id })),
+          ]
         },
         close: () => {},
       }
@@ -104,5 +109,27 @@ describe('CodeBuddy catalog isolation per region', () => {
     fake.failReads = false
     await expect(catalog.models('cn')).resolves.toMatchObject([{ id: 'internal-model' }])
     expect(fake.calls).toHaveLength(2)
+  })
+
+  /**
+   * The chat model picker caches one catalog per Host generation and reloads it
+   * only when the Host reports a change, so one notification per real change is
+   * what keeps it current — and no notification for a refresh that answered the
+   * same list keeps it from reloading for nothing.
+   */
+  it('notifies once per changed list', async () => {
+    fake.calls.length = 0
+    fake.extra = []
+    const seen: string[][] = []
+    const catalog = new CodeBuddyCatalog(() => 'cn', () => 0, undefined, undefined, ids => seen.push([...ids]))
+
+    await catalog.models('cn')
+    await catalog.models('cn')
+    expect(seen).toEqual([['internal-model']])
+
+    fake.extra = ['extra-model']
+    await catalog.models('cn')
+    expect(seen).toEqual([['internal-model'], ['internal-model', 'extra-model']])
+    fake.extra = []
   })
 })

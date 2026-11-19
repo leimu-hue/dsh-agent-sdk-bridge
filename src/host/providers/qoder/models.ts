@@ -66,6 +66,17 @@ const sharedSnapshots = new Map<QoderBrand, CatalogSnapshot>()
  */
 const answeredCatalogs = new Set<QoderBrand>()
 
+/**
+ * The identity of one advertised list, as clients were last told it.
+ *
+ * Only what a picker renders is compared: ids and display names. Upstream
+ * re-sends the whole list on every fetch, so comparing the entries themselves
+ * would report a change whenever any unrelated field moved.
+ */
+function catalogSignature(models: readonly { value: string, displayName: string }[]): string {
+  return JSON.stringify(models.map(model => [model.value, model.displayName]))
+}
+
 /** Cached live CLI catalog with a static fallback. */
 export class QoderModelCatalog {
   private cached: CatalogSnapshot | undefined
@@ -78,6 +89,12 @@ export class QoderModelCatalog {
    * cache was dropped for that account change.
    */
   private epoch = 0
+  /**
+   * The list clients were last told about, so a refresh that changed nothing
+   * stays quiet. Deliberately kept across {@link invalidate}: dropping the
+   * cache says "re-read", not "the answer will differ".
+   */
+  private announced: string | undefined
 
   /**
    * @param brand - which edition's CLI answers.
@@ -85,11 +102,17 @@ export class QoderModelCatalog {
    *   Read per use, so a settings edit takes effect on the next read.
    * @param fetchTimeoutMs - how long one CLI catalog fetch may take before the
    *   static fallback takes over.
+   * @param onChange - notified with the advertised ids when a successful read
+   *   advertises a different list than the last one. The harness forwards this
+   *   to every GUI, whose model picker caches one catalog per Host generation
+   *   and only reloads it on a change notification: without this, a model the
+   *   account gained after login stayed invisible until a restart.
    */
   constructor(
     private readonly brand: QoderBrand,
     private readonly ttlMs: Live<number>,
     private readonly fetchTimeoutMs: Live<number> = DEFAULT_FETCH_TIMEOUT_MS,
+    private readonly onChange?: (ids: readonly string[]) => void,
   ) {}
 
   /**
@@ -133,7 +156,12 @@ export class QoderModelCatalog {
       // must not mistake it for "the CLI was never reachable" and publish the
       // captured plan.
       answeredCatalogs.add(this.brand)
-      return officialOnly(models)
+      const visible = officialOnly(models)
+      // Announce before answering: a reader that awaited this fetch (the
+      // settings page, the picker's own resolution) then repaints from the
+      // same list the connected GUIs are told to reload.
+      this.announce(visible)
+      return visible
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
       if (epoch === this.epoch) this.failure = cliFailureText(detail, this.brand)
@@ -141,6 +169,23 @@ export class QoderModelCatalog {
       // to the static fallback, which would hide the account's real models.
       return officialOnly((this.cached ?? sharedSnapshots.get(this.brand))?.models ?? [])
     }
+  }
+
+  /**
+   * Tell the owner that the advertised list changed, once per change.
+   *
+   * The GUI's model picker holds one catalog per Host generation and does not
+   * re-read it on its own, so this is the only way a model the account gained
+   * (or lost) reaches the composer without restarting DSH.
+   *
+   * @param models - the official entries this read answered with.
+   */
+  private announce(models: readonly ModelInfo[]): void {
+    if (this.onChange === undefined) return
+    const signature = catalogSignature(models)
+    if (signature === this.announced) return
+    this.announced = signature
+    this.onChange(models.map(model => model.value))
   }
 
   /**

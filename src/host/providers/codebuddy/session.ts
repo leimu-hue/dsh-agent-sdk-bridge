@@ -384,6 +384,15 @@ export class CodeBuddyCatalog {
   private readonly snapshots = new Map<CodeBuddyRegion, { at: number, models: readonly CodeBuddyModel[] }>()
   private readonly inflight = new Map<CodeBuddyRegion, Promise<readonly CodeBuddyModel[]>>()
   private readonly failures = new Map<CodeBuddyRegion, string>()
+  /**
+   * The list clients were last told about, per region.
+   *
+   * A refresh that answers the same ids and names stays quiet; only a real
+   * change is worth making every connected GUI reload a whole model catalog.
+   * Kept across {@link invalidate} — dropping the cache says "re-read", not
+   * "the answer will differ".
+   */
+  private readonly announced = new Map<CodeBuddyRegion, string>()
   /** Warm control sessions, one per region, released when they go idle. */
   private readonly controls = new Map<CodeBuddyRegion, { session: SessionImpl, timer: ReturnType<typeof setTimeout> | undefined }>()
 
@@ -392,6 +401,12 @@ export class CodeBuddyCatalog {
     private readonly ttlMs: Live<number> = CODEBUDDY_CACHE_TTL_MS,
     private readonly timeoutMs: Live<number> = CODEBUDDY_FETCH_TIMEOUT_MS,
     private readonly controlIdleMs: Live<number> = CONTROL_IDLE_MS,
+    /**
+     * Notified with the advertised ids when a read advertises a different list
+     * than the last one for that region. The provider route is shared by both
+     * login regions, so the owner relays one notification for the route.
+     */
+    private readonly onChange?: (ids: readonly string[]) => void,
   ) {}
 
   /**
@@ -419,11 +434,26 @@ export class CodeBuddyCatalog {
       const models = await pending
       this.snapshots.set(region, { at: Date.now(), models })
       this.failures.delete(region)
+      this.announce(region, models)
       return models
     } catch (error) {
       this.failures.set(region, error instanceof Error ? error.message : String(error))
       return cached?.models ?? []
     }
+  }
+
+  /**
+   * Tell the owner that one region's advertised list changed, once per change.
+   *
+   * @param region - the region this read answered for.
+   * @param models - the entries it answered with.
+   */
+  private announce(region: CodeBuddyRegion, models: readonly CodeBuddyModel[]): void {
+    if (this.onChange === undefined) return
+    const signature = JSON.stringify(models.map(model => [model.id, model.name]))
+    if (this.announced.get(region) === signature) return
+    this.announced.set(region, signature)
+    this.onChange(models.map(model => model.id))
   }
 
   /** Why the last refresh failed, or undefined when it succeeded. */

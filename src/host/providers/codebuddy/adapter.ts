@@ -66,6 +66,15 @@ export interface CodeBuddyAdapterOptions {
    * edit it. Absent → an unreadable image keeps the harness placeholder.
    */
   imagePath?: ImagePathResolver
+  /**
+   * Called when the account's advertised model list changes, with the new ids.
+   *
+   * The plugin relays this onto the harness's `llm/models-updated`, which is
+   * how a connected GUI's model picker learns that it must reload. Signing in
+   * or out changes the list without any catalog read noticing, so those paths
+   * report it themselves.
+   */
+  onModelsChanged?: (ids: readonly string[]) => void
 }
 
 /** Map a harness-side id onto a CodeBuddy model value. */
@@ -99,6 +108,8 @@ export class CodeBuddyAdapter extends LlmAdapter {
       options.region ?? (() => 'global'),
       options.modelCacheTtlMs ?? CODEBUDDY_CACHE_TTL_MS,
       options.catalogFetchTimeoutMs ?? CODEBUDDY_FETCH_TIMEOUT_MS,
+      undefined,
+      options.onModelsChanged,
     )
     this.accounts = new CodeBuddyAccountReader(
       options.region ?? (() => 'global'),
@@ -175,6 +186,10 @@ export class CodeBuddyAdapter extends LlmAdapter {
       this.catalog.discardControl(region)
       this.invalidateCatalog(region)
       this.invalidateUsage(region)
+      // The chat model picker still holds whatever the previous account
+      // advertised. Read the new list now: that read announces itself, so the
+      // picker updates without a restart or a settings visit.
+      void this.catalog.models(region).catch(() => undefined)
     })
   }
 
@@ -184,6 +199,9 @@ export class CodeBuddyAdapter extends LlmAdapter {
     this.catalog.discardControl(region)
     this.invalidateCatalog(region)
     this.invalidateUsage(region)
+    // Signing out changes what this route advertises (to nothing) without a
+    // catalog read to notice it, so say so directly.
+    this.options.onModelsChanged?.([])
     return result
   }
 

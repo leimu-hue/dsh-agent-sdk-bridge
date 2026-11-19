@@ -82,6 +82,19 @@ declare module '@deepseek-ai/cordis' {
      * @param paths - one path array per committed field, e.g. `[['displayName']]`.
      */
     'loader/volatile-update'(paths: readonly (readonly string[])[]): void
+
+    /**
+     * One provider's advertised models or display metadata changed.
+     *
+     * The host forwards it to every connected GUI, whose model picker reloads
+     * the catalog. Declared here because the `@deepseek-ai/dsh-llm` version this
+     * plugin compiles against predates the event, while the harnesses it runs
+     * on (0.2.2-rc.5 and later) declare and dispatch it; emitting an event a
+     * slightly older host does not know is harmless — nothing listens.
+     *
+     * @param provider - the route whose catalog changed.
+     */
+    'llm/models-updated'(provider: string): void
   }
 }
 
@@ -218,6 +231,34 @@ export function apply(ctx: Context, config: ParsedConfig): void {
   trace('apply', { n: applyCount })
 
   /**
+   * Tell the harness that one route's advertised models changed.
+   *
+   * A connected GUI caches the model catalog for the lifetime of its Host
+   * generation and reloads it only when the Host says something changed:
+   * `llm/adapters-updated` (a route was registered or withdrawn — startup, an
+   * edition switch) or `llm/models-updated` (the list itself moved). This
+   * plugin used to fire neither after a CLI login. Its own settings page reads
+   * the catalog through its API, so the page showed the new models while the
+   * chat model picker kept the pre-login list until a restart re-registered the
+   * adapter and produced the first kind of event.
+   *
+   * Observer-only: a listener failure must never break the catalog read that
+   * produced it, and the trace line is what makes "did the picker get told?"
+   * answerable from `bridge.log`.
+   *
+   * @param provider - the route whose catalog changed.
+   * @param ids - the advertised model ids; only their count is logged.
+   */
+  const announceModels = (provider: string, ids: readonly string[]): void => {
+    trace('catalog/updated', { provider, models: ids.length })
+    try {
+      ctx.emit('llm/models-updated', provider)
+    } catch (error) {
+      ctx.logger?.warn(`llm-qoder-cn: 通知模型目录变化失败：${String(error)}`)
+    }
+  }
+
+  /**
    * Everything both editions share.
    *
    * Images reach the inner model only through the host attachment store, so
@@ -275,6 +316,7 @@ export function apply(ctx: Context, config: ParsedConfig): void {
       disabledModels: live.disabledModels,
       modelContextWindows: live.modelContextWindows,
       modelAliases: live.modelAliases,
+      onModelsChanged: ids => announceModels(QODER_PROVIDER, ids),
     }),
     global: new QoderAdapter({
       ...shared,
@@ -283,6 +325,7 @@ export function apply(ctx: Context, config: ParsedConfig): void {
       disabledModels: live.intlDisabledModels,
       modelContextWindows: live.intlModelContextWindows,
       modelAliases: live.intlModelAliases,
+      onModelsChanged: ids => announceModels(QODER_INTL_PROVIDER, ids),
     }),
     codebuddy: new CodeBuddyAdapter({
       maxSessions: live.maxSessions,
@@ -304,6 +347,7 @@ export function apply(ctx: Context, config: ParsedConfig): void {
       modelAliases: live.codebuddyModelAliases,
       readImage: shared.readImage,
       imagePath: shared.imagePath,
+      onModelsChanged: ids => announceModels(CODEBUDDY_PROVIDER, ids),
     }),
   }
 

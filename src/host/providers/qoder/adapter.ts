@@ -93,6 +93,16 @@ export interface QoderAdapterOptions {
   brand?: QoderBrand
   /** How long one quota reading stays fresh; read per use. */
   usageCacheTtlMs?: Live<number>
+  /**
+   * Called when the account's advertised model list changes, with the new ids.
+   *
+   * The plugin relays this onto the harness's `llm/models-updated`, which is
+   * the only notification a connected GUI's model picker reacts to. A model the
+   * account gained after the picker had already loaded (a CLI login performed
+   * while DSH is running) was otherwise invisible until a restart re-registered
+   * the adapter.
+   */
+  onModelsChanged?: (ids: readonly string[]) => void
 }
 
 /** Shared empty values, so an unset list or map allocates nothing per read. */
@@ -282,6 +292,7 @@ export class QoderAdapter extends LlmAdapter {
       this.brand,
       options.modelCacheTtlMs ?? DEFAULT_MODEL_CACHE_TTL_MS,
       options.catalogFetchTimeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS,
+      options.onModelsChanged,
     )
     this.usage = new QoderUsage(this.brand, options.usageCacheTtlMs)
     this.readImage = options.readImage

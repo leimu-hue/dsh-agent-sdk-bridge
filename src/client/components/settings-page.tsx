@@ -92,6 +92,16 @@ export function SettingsPage({ ctx, t, brand }: SlotProps): ReactElement {
   const [error, setError] = useState<string | undefined>(undefined)
   const [status, setStatus] = useState<string | undefined>(undefined)
   const [busy, setBusy] = useState(false)
+  /**
+   * Whether a catalog read is in flight.
+   *
+   * Kept apart from `busy`, which belongs to config writes: a refresh is a
+   * read that can take as long as a CLI cold start, and it used to give no
+   * feedback at all — the list silently changed shape seconds after the click.
+   * The refresh action is also the account refresh, so this is what tells the
+   * user that the quota card and the model table are being re-read together.
+   */
+  const [reading, setReading] = useState(false)
   const [query, setQuery] = useUrlText('q', '')
   const [onlyEnabled, setOnlyEnabled] = useUrlFlag('only', false)
   const [showAdvanced, setShowAdvanced] = useUrlFlag('advanced', false)
@@ -173,6 +183,7 @@ export function SettingsPage({ ctx, t, brand }: SlotProps): ReactElement {
   const load = useCallback(async (fresh = false) => {
     const requestedKind = modelsKind
     setError(undefined)
+    setReading(true)
     const mine = ++ticket.current
     try {
       const read = await fetchModels(fresh)
@@ -182,6 +193,10 @@ export function SettingsPage({ ctx, t, brand }: SlotProps): ReactElement {
       if (mine !== ticket.current || kindRef.current !== requestedKind) return
       setError(String((caught as Error | undefined)?.message ?? caught))
       setModels(previous => previous ?? [])
+    } finally {
+      // Only the newest read owns the indicator: an older one may settle after
+      // the newer one already answered.
+      if (mine === ticket.current) setReading(false)
     }
   }, [adopt, fetchModels, modelsKind])
 
@@ -190,6 +205,21 @@ export function SettingsPage({ ctx, t, brand }: SlotProps): ReactElement {
   /** The region of the last model read; a change forces a fresh read. */
   const lastLoaded = useRef<Region | undefined>(undefined)
   const refresh = useCallback(() => { void loadRef.current() }, [])
+
+  /**
+   * Re-read the whole account: the model list and the quota card together.
+   *
+   * They come from two routes, and the quota is the fast one — a single control
+   * call — while the catalog is a cold-start round trip that an account just
+   * logged in may wait on for seconds. Refreshing only one of them showed the
+   * new quota beside the previous account's model list, which reads as "the
+   * models are not there yet" even though nothing had asked for them. One
+   * action starts both, so the page converges instead of half-updating.
+   */
+  const refreshAccount = useCallback(() => {
+    setUsageTick(value => value + 1)
+    void loadRef.current(true)
+  }, [])
 
   /**
    * On a region switch, paint that region's remembered table first and then
@@ -384,9 +414,10 @@ export function SettingsPage({ ctx, t, brand }: SlotProps): ReactElement {
                   type="button"
                   className={CLASS.button}
                   style={{ ...css.btn, marginTop: '8px' }}
-                  onClick={() => void load(true)}
+                  disabled={reading}
+                  onClick={refreshAccount}
                 >
-                  {t('retry')}
+                  {reading ? t('refreshing') : t('retry')}
                 </button>
                 <div style={{ marginTop: '10px' }}>{guide}</div>
               </div>
@@ -480,7 +511,7 @@ export function SettingsPage({ ctx, t, brand }: SlotProps): ReactElement {
     <div className={CLASS.page} style={css.page}>
       <h2 style={css.h2}>{t(brand.titleKey)}</h2>
       <p style={css.intro}>{t(brand.introKey)}</p>
-      {regional ? authCard : <UsageCard t={t} brand={brand} refreshSignal={usageTick} />}
+      {regional ? authCard : <UsageCard t={t} brand={brand} refreshSignal={usageTick} onRefresh={refreshAccount} />}
 
       {/* Search row: the field grows, the filter sits beside it. */}
       <div style={css.bar}>
@@ -511,8 +542,14 @@ export function SettingsPage({ ctx, t, brand }: SlotProps): ReactElement {
 
       {/* Action row: wraps rather than overflowing a narrow settings panel. */}
       <div style={css.actions}>
-        <button type="button" className={CLASS.button} style={css.btn} disabled={busy} onClick={() => void load(true)}>
-          {busy ? t('refreshing') : t('refresh')}
+        <button
+          type="button"
+          className={CLASS.button}
+          style={css.btn}
+          disabled={busy || reading}
+          onClick={refreshAccount}
+        >
+          {reading ? t('refreshing') : t('refresh')}
         </button>
         <button
           type="button"
