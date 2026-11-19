@@ -95,8 +95,10 @@ describe('region scope on the auth calls', () => {
 
     fake.authCalls.length = 0
     await new Promise<void>(resolve => { void auth.start('global', () => resolve()) })
-    const globalDir = (fake.authCalls[0].env as Record<string, string>).CODEBUDDY_CONFIG_DIR
-    expect(leaf(globalDir)).toBe('global')
+    const [firstAuth] = fake.authCalls
+    const globalDir = (firstAuth?.env as Record<string, string> | undefined)?.CODEBUDDY_CONFIG_DIR
+    expect(globalDir).toBeDefined()
+    expect(leaf(String(globalDir))).toBe('global')
     expect(globalDir).not.toBe(dirs[0])
   })
 

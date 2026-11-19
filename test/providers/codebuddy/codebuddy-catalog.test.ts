@@ -61,12 +61,13 @@ describe('CodeBuddy catalog isolation per region', () => {
     expect(global.map(model => model.id)).toEqual(['external-model'])
     expect(cn.map(model => model.id)).toEqual(['internal-model'])
     expect(fake.calls).toHaveLength(2)
-    expect(fake.calls[0].environment).toBe('external')
-    expect(fake.calls[1].environment).toBe('internal')
+    const [external, internal] = fake.calls
+    expect(external?.environment).toBe('external')
+    expect(internal?.environment).toBe('internal')
     // Distinct directories: the CLI's remembered environment is per directory,
     // so one region can never make the other read the wrong catalog.
-    expect(fake.calls[0].env?.CODEBUDDY_CONFIG_DIR).toBe(join(root, 'global'))
-    expect(fake.calls[1].env?.CODEBUDDY_CONFIG_DIR).toBe(join(root, 'cn'))
+    expect(external?.env?.CODEBUDDY_CONFIG_DIR).toBe(join(root, 'global'))
+    expect(internal?.env?.CODEBUDDY_CONFIG_DIR).toBe(join(root, 'cn'))
   })
 
   it('serves repeat reads from the cache instead of booting again', async () => {
