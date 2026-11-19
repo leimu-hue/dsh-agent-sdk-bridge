@@ -47,7 +47,7 @@ vi.mock('../../../src/host/infra/sdk.ts', () => ({
   }),
 }))
 
-const { CodeBuddyCatalog } = await import('../../../src/host/providers/codebuddy/session.ts')
+const { CodeBuddyCatalog } = await import('../../../src/host/providers/codebuddy/catalog.ts')
 
 afterAll(() => { rmSync(root, { recursive: true, force: true }) })
 

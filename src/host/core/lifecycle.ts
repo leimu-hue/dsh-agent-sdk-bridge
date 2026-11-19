@@ -28,6 +28,8 @@ export type CloseCause =
   | 'dispose'
   /** The pool needed the slot for another conversation. */
   | 'evicted'
+  /** The session sat unused past its idle TTL. */
+  | 'idle'
   /** A login, logout or account switch replaced the credentials. */
   | 'account'
   /** The CodeBuddy login region changed. */
@@ -56,6 +58,7 @@ export const DEFAULT_DRAIN_MS = 120_000
 const CLOSE_TEXT: Record<CloseCause, string> = {
   dispose: 'DSH 已重新加载或停用本插件，本轮被中断；再次发送时会话会重建',
   evicted: '本会话被回收（同时保持的会话数超过上限），本轮被中断；再次发送即可继续',
+  idle: '本会话长时间空闲已被回收，本轮被中断；再次发送即可继续',
   account: '登录账号已变更，本轮被中断；再次发送即可继续',
   region: 'CodeBuddy 登录区域已切换，本轮被中断；再次发送即可继续',
   rebuild: '会话历史已分叉，本轮被中断；再次发送即可继续',

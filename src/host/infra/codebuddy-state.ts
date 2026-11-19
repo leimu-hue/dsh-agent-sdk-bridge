@@ -19,7 +19,7 @@ import { dirname, join } from 'node:path'
 import type { CodeBuddyRegion } from '../core/brand.ts'
 import type {
   CodeBuddyAccount, CodeBuddyQuota, CodeBuddyUsageSnapshot,
-} from '../providers/codebuddy/session.ts'
+} from '../providers/codebuddy/account.ts'
 
 /** The signed-in identity remembered for one region. */
 export interface CodeBuddySavedUser {

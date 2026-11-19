@@ -153,14 +153,14 @@ describe('closing a session with a turn in flight', () => {
     const { chunks, pump } = await startTurn(session)
 
     fake.state.channel?.push(delta('half an ans'))
-    session.close('evicted')
+    session.close('idle')
     await pump
 
     const reason = finishOf(chunks)
     expect(reason?.kind).toBe('aborted')
     // Never an error: the provider did not fail, the host reclaimed the slot.
     expect(reason?.failure.code).toBe('ABORTED')
-    expect(reason?.failure.message).toContain('回收')
+    expect(reason?.failure.message).toContain('空闲')
   })
 
   it('refuses a new turn after the close, without a retryable code', async () => {

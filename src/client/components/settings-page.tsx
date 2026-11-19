@@ -16,7 +16,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import type { ReactElement } from 'react'
 import { api, readCache, withDeadline, writeCache, WRITE_TIMEOUT_MS } from '../api.ts'
 import { ADVANCED } from '../brands.ts'
-import { priceSuffix, windowLabel } from '../format.ts'
 import { codeBuddySnapshot } from '../snapshots.ts'
 import { CLASS, css } from '../styles.ts'
 import type {
@@ -25,14 +24,9 @@ import type {
 import { useUrlFlag, useUrlText } from '../url-state.ts'
 import { AdvancedBlock } from './advanced-fields.tsx'
 import { CodeBuddyCard } from './codebuddy-card.tsx'
+import { ModelRowView } from './model-row.tsx'
 import { LiveAlert, LiveStatus, useInstanceId } from './primitives.tsx'
 import { UsageCard } from './usage-card.tsx'
-
-/** What a model row's window column chooses between. */
-interface WindowChoice {
-  value: string
-  label: string
-}
 
 /**
  * Re-read until the list reflects what was just written, or give up.
@@ -426,75 +420,18 @@ export function SettingsPage({ ctx, t, brand }: SlotProps): ReactElement {
     )
   }
 
-  const rows = shown.map((model, index) => {
-    const choices: number[] = Array.isArray(model.contextWindows) ? model.contextWindows : []
-    // A model the provider pins to one window has nothing to choose: the CLI
-    // rejects every other value, so a dropdown here would be a control that
-    // never reaches the upstream. Show the value instead.
-    const fixedWindow = model.contextWindowSelectable === false || choices.length === 0
-    // The default window has its own entry; repeating it in the list reads as
-    // two identical choices. A stored override equal to it still shows.
-    const offered: WindowChoice[] = choices
-      .filter(size => size !== model.defaultContextWindow || size === model.override)
-      .map(size => ({ value: String(size), label: windowLabel(size) }))
-    const checkboxId = `dssb-model-${brand.id}-${index}`
-    return (
-      <div
-        key={model.id}
-        className={CLASS.row}
-        style={{ ...css.row, ...(index === 0 ? css.rowFirst : {}), ...(model.enabled ? {} : css.rowOff) }}
-      >
-        <input
-          id={checkboxId}
-          type="checkbox"
-          className={CLASS.check}
-          style={css.switch}
-          checked={model.enabled === true}
-          disabled={busy}
-          onChange={event => { void writeDisabled(all, model.id, event.target.checked) }}
-        />
-        <div style={css.name}>
-          <label htmlFor={checkboxId} className={CLASS.hit} style={{ display: 'flex', alignItems: 'baseline', minWidth: 0 }}>
-            <span style={css.nameText} title={model.name} translate="no">{model.name}</span>
-            {model.vision === true
-              ? <span style={{ ...css.tag, marginLeft: '6px' }}>{t('vision')}</span>
-              : null}
-            {priceSuffix(t, model.priceFactor) !== ''
-              ? <span style={css.price}>{` · ${priceSuffix(t, model.priceFactor)}`}</span>
-              : null}
-          </label>
-          <div style={css.id} translate="no">{model.id}</div>
-        </div>
-        {fixedWindow
-          ? (
-              <span
-                style={{ ...css.note, minWidth: '104px', textAlign: 'right' }}
-                title={t('windowFixedHint')}
-              >
-                {`${windowLabel(model.contextWindow ?? model.defaultContextWindow)} · ${t('windowFixed')}`}
-              </span>
-            )
-          : (
-              <select
-                className={CLASS.select}
-                style={css.select}
-                value={model.override === undefined ? '' : String(model.override)}
-                disabled={busy}
-                title={t('windowDefaultHint')}
-                aria-label={`${model.name} ${t('windowSelectLabel')}`}
-                onChange={event => {
-                  const next = event.target.value
-                  void writeWindow(all, model.id, next === '' ? undefined : Number(next))
-                }}
-              >
-                <option value="">{`${t('windowDefault')} · ${windowLabel(model.defaultContextWindow)}`}</option>
-                {offered.map(choice => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
-              </select>
-            )}
-      </div>
-    )
-  })
-
+  const rows = shown.map((model, index) => (
+    <ModelRowView
+      key={model.id}
+      model={model}
+      index={index}
+      brandId={brand.id}
+      t={t}
+      busy={busy}
+      onToggle={enabled => { void writeDisabled(all, model.id, enabled) }}
+      onWindow={window => { void writeWindow(all, model.id, window) }}
+    />
+  ))
   const advanced = (
     <AdvancedBlock
       t={t}

@@ -2,16 +2,17 @@
  * The warm-session pool both provider backends run.
  *
  * A pool is the only thing that decides when a subprocess is evicted, when a
- * credential change drops it, and when an unloaded plugin refuses to spawn a
- * new one. Those are provider-independent rules — a session is just
- * `{ sessionId, busy, close(cause) }` — so they live here once instead of
- * twice. Each backend supplies only how to build one and, where it has one, the
- * fact that makes a held session unusable (CodeBuddy's login region).
+ * credential change drops it, when an idle one is reclaimed, and when an
+ * unloaded plugin refuses to spawn a new one. Those are provider-independent
+ * rules — a session is just `{ sessionId, busy, close(cause) }` — so they live
+ * here once instead of twice. Each backend supplies only how to build one and,
+ * where it has one, the fact that makes a held session unusable (CodeBuddy's
+ * login region).
  *
  * The pool's interface is deliberately narrow: `forSession`, `dispose`,
- * `closeAll`, `seal`. Eviction order, the busy guard, and the sealed state are
- * implementation detail, so both backends' managers are thin adapters over the
- * same behaviour rather than two copies of it.
+ * `closeAll`, `seal`, `sweepIdle`. Eviction order, the busy guard, the idle
+ * sweep and the sealed state are implementation detail, so both backends'
+ * managers are thin adapters over the same behaviour rather than two copies.
  *
  * @module dsh-agent-sdk-bridge/core/session-pool
  */
@@ -27,9 +28,17 @@ export interface SessionPoolOptions {
     maxSessions: Live<number>;
     /** Cap used when `maxSessions` resolves to undefined. */
     fallbackMaxSessions?: number;
+    /**
+     * How long a session may sit unused before the sweep reclaims it.
+     *
+     * Read per sweep, so a settings edit applies to the next tick; `0` disables
+     * reclamation without stopping the timer. Omit the option entirely (as tests
+     * and one-off pools do) to avoid creating a timer at all.
+     */
+    idleMs?: Live<number>;
 }
 /**
- * An LRU pool of warm sessions.
+ * An LRU pool of warm sessions with an optional idle sweep.
  *
  * Insertion order is the LRU order: a session read through {@link forSession}
  * is re-inserted at the end, so the first idle entry is always the least
@@ -40,8 +49,11 @@ export interface SessionPoolOptions {
 export declare class SessionPool<T extends PoolSession> {
     private readonly options;
     private readonly sessions;
+    /** When each held session was last requested, for {@link sweepIdle}. */
+    private readonly lastUsed;
     /** Set by {@link seal}: this pool's plugin generation is gone. */
     private sealed;
+    private sweepTimer;
     constructor(options: SessionPoolOptions);
     /**
      * The existing session for `sessionId`, or a fresh one.
@@ -70,6 +82,17 @@ export declare class SessionPool<T extends PoolSession> {
      * that nothing owns afterwards.
      */
     seal(cause?: CloseCause): void;
+    /**
+     * Reclaim sessions that have been unused for longer than `idleMs`.
+     *
+     * A session with a turn in flight is never reclaimed: killing it would report
+     * the turn as a stream failure and discard an answer that was arriving. The
+     * method is public so the sweep can be tested at a chosen timestamp instead of
+     * waiting for the timer.
+     *
+     * @param now - the wall clock to measure against; defaults to now.
+     */
+    sweepIdle(now?: number): void;
     /** How many warm sessions the pool holds, for diagnostics and tests. */
     get size(): number;
     /** Whether this pool refuses new sessions. */

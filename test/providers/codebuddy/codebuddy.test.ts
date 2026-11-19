@@ -8,7 +8,8 @@
 import { describe, expect, it } from 'vitest'
 import { codeBuddyEnvironment, isCodeBuddyRegion } from '../../../src/host/core/brand.ts'
 import { resolveCodeBuddyModelId } from '../../../src/host/providers/codebuddy/adapter.ts'
-import { fetchCodeBuddyQuota, parseCodeBuddyQuota, toCodeBuddyModel } from '../../../src/host/providers/codebuddy/session.ts'
+import { fetchCodeBuddyQuota, parseCodeBuddyQuota } from '../../../src/host/providers/codebuddy/account.ts'
+import { toCodeBuddyModel } from '../../../src/host/providers/codebuddy/catalog.ts'
 
 describe('CodeBuddy model mapping', () => {
   it('reads windows, vision, reasoning and the quoted credit multiplier', () => {

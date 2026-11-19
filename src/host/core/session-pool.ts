@@ -2,27 +2,32 @@
  * The warm-session pool both provider backends run.
  *
  * A pool is the only thing that decides when a subprocess is evicted, when a
- * credential change drops it, and when an unloaded plugin refuses to spawn a
- * new one. Those are provider-independent rules — a session is just
- * `{ sessionId, busy, close(cause) }` — so they live here once instead of
- * twice. Each backend supplies only how to build one and, where it has one, the
- * fact that makes a held session unusable (CodeBuddy's login region).
+ * credential change drops it, when an idle one is reclaimed, and when an
+ * unloaded plugin refuses to spawn a new one. Those are provider-independent
+ * rules — a session is just `{ sessionId, busy, close(cause) }` — so they live
+ * here once instead of twice. Each backend supplies only how to build one and,
+ * where it has one, the fact that makes a held session unusable (CodeBuddy's
+ * login region).
  *
  * The pool's interface is deliberately narrow: `forSession`, `dispose`,
- * `closeAll`, `seal`. Eviction order, the busy guard, and the sealed state are
- * implementation detail, so both backends' managers are thin adapters over the
- * same behaviour rather than two copies of it.
+ * `closeAll`, `seal`, `sweepIdle`. Eviction order, the busy guard, the idle
+ * sweep and the sealed state are implementation detail, so both backends'
+ * managers are thin adapters over the same behaviour rather than two copies.
  *
  * @module dsh-agent-sdk-bridge/core/session-pool
  */
 
 import { LlmError } from '@deepseek-ai/dsh-llm'
 import type { CloseCause, PoolSession } from './lifecycle.ts'
+import { unrefTimer } from './lifecycle.ts'
 import type { Live } from './live.ts'
 import { readLive } from './live.ts'
 
 /** Warm sessions kept alive when the deployment names no cap. */
 export const DEFAULT_MAX_SESSIONS = 8
+
+/** How often the pool looks for idle sessions; the timer is unref'd. */
+const IDLE_SWEEP_MS = 30_000
 
 /** What a pool needs to know beyond the sessions themselves. */
 export interface SessionPoolOptions {
@@ -32,10 +37,18 @@ export interface SessionPoolOptions {
   maxSessions: Live<number>
   /** Cap used when `maxSessions` resolves to undefined. */
   fallbackMaxSessions?: number
+  /**
+   * How long a session may sit unused before the sweep reclaims it.
+   *
+   * Read per sweep, so a settings edit applies to the next tick; `0` disables
+   * reclamation without stopping the timer. Omit the option entirely (as tests
+   * and one-off pools do) to avoid creating a timer at all.
+   */
+  idleMs?: Live<number>
 }
 
 /**
- * An LRU pool of warm sessions.
+ * An LRU pool of warm sessions with an optional idle sweep.
  *
  * Insertion order is the LRU order: a session read through {@link forSession}
  * is re-inserted at the end, so the first idle entry is always the least
@@ -45,10 +58,19 @@ export interface SessionPoolOptions {
  */
 export class SessionPool<T extends PoolSession> {
   private readonly sessions = new Map<string, T>()
+  /** When each held session was last requested, for {@link sweepIdle}. */
+  private readonly lastUsed = new Map<string, number>()
   /** Set by {@link seal}: this pool's plugin generation is gone. */
   private sealed = false
+  private sweepTimer: ReturnType<typeof setInterval> | undefined
 
-  constructor(private readonly options: SessionPoolOptions) {}
+  constructor(private readonly options: SessionPoolOptions) {
+    if (options.idleMs !== undefined) {
+      // Unref'd, so an idle plugin never keeps the host process alive.
+      this.sweepTimer = setInterval(() => { this.sweepIdle() }, IDLE_SWEEP_MS)
+      unrefTimer(this.sweepTimer)
+    }
+  }
 
   /**
    * The existing session for `sessionId`, or a fresh one.
@@ -76,14 +98,17 @@ export class SessionPool<T extends PoolSession> {
         // Re-insert to move it to the end of the LRU order.
         this.sessions.delete(sessionId)
         this.sessions.set(sessionId, existing)
+        this.lastUsed.set(sessionId, Date.now())
         return existing
       }
       this.sessions.delete(sessionId)
+      this.lastUsed.delete(sessionId)
       existing.close(cause)
     }
 
     const session = create(sessionId)
     this.sessions.set(sessionId, session)
+    this.lastUsed.set(sessionId, Date.now())
     this.evictToCap(sessionId)
     return session
   }
@@ -93,6 +118,7 @@ export class SessionPool<T extends PoolSession> {
     const session = this.sessions.get(sessionId)
     if (session === undefined) return
     this.sessions.delete(sessionId)
+    this.lastUsed.delete(sessionId)
     session.close('rebuild')
   }
 
@@ -107,6 +133,7 @@ export class SessionPool<T extends PoolSession> {
   closeAll(cause: CloseCause = 'account'): void {
     for (const session of this.sessions.values()) session.close(cause)
     this.sessions.clear()
+    this.lastUsed.clear()
   }
 
   /**
@@ -118,7 +145,35 @@ export class SessionPool<T extends PoolSession> {
    */
   seal(cause: CloseCause = 'dispose'): void {
     this.sealed = true
+    if (this.sweepTimer !== undefined) {
+      clearInterval(this.sweepTimer)
+      this.sweepTimer = undefined
+    }
     this.closeAll(cause)
+  }
+
+  /**
+   * Reclaim sessions that have been unused for longer than `idleMs`.
+   *
+   * A session with a turn in flight is never reclaimed: killing it would report
+   * the turn as a stream failure and discard an answer that was arriving. The
+   * method is public so the sweep can be tested at a chosen timestamp instead of
+   * waiting for the timer.
+   *
+   * @param now - the wall clock to measure against; defaults to now.
+   */
+  sweepIdle(now: number = Date.now()): void {
+    if (this.sealed) return
+    const idleMs = this.options.idleMs === undefined ? 0 : readLive(this.options.idleMs, 0)
+    if (!(idleMs > 0)) return
+    for (const [id, session] of [...this.sessions.entries()]) {
+      if (session.busy) continue
+      const seen = this.lastUsed.get(id) ?? now
+      if (now - seen < idleMs) continue
+      this.sessions.delete(id)
+      this.lastUsed.delete(id)
+      session.close('idle')
+    }
   }
 
   /** How many warm sessions the pool holds, for diagnostics and tests. */
@@ -144,6 +199,7 @@ export class SessionPool<T extends PoolSession> {
       // turn as a stream failure and throws away an answer that was arriving.
       if (id === keep || candidate.busy) continue
       this.sessions.delete(id)
+      this.lastUsed.delete(id)
       candidate.close('evicted')
     }
   }

@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest'
 import {
   Config, CODEBUDDY_PROVIDER, QODER_INTL_PROVIDER, QODER_PROVIDER, apply, liveConfig,
 } from '../../src/host/index.ts'
+import { CONFIG_FIELD_MAP } from '../../src/host/core/config.ts'
 
 /**
  * Validate a raw config the way the loader does.
@@ -220,6 +221,7 @@ describe('live config', () => {
     const live = liveConfig(undefined)
     expect(live.disabledModels()).toEqual([])
     expect(live.maxSessions()).toBe(8)
+    expect(live.sessionIdleMs()).toBe(600_000)
     expect(live.defaultReasoningEffort()).toBeUndefined()
     // Every provider is on unless the profile explicitly switches one off.
     expect(live.cnEnabled()).toBe(true)
@@ -243,6 +245,15 @@ describe('live config', () => {
     expect(live.codebuddyCnDisabledModels()).toEqual(['cn-off'])
     expect(live.codebuddyGlobalModelContextWindows()).toEqual({ 'global-model': 1_000_000 })
     expect(live.codebuddyCnModelContextWindows()).toEqual({ 'cn-model': 200_000 })
+  })
+
+  it('resolves every field the schema declares', () => {
+    // The schema and the live view are maintained separately (the schema also
+    // carries UI metadata); this is the runtime half of the contract that keeps
+    // a newly added field from being silently ignored.
+    const dict = (Config as unknown as { dict?: Record<string, unknown> }).dict
+    expect(dict).toBeDefined()
+    expect(Object.keys(CONFIG_FIELD_MAP).sort()).toEqual(Object.keys(dict ?? {}).sort())
   })
 
   it('keeps a list value stable between reads and refreshes it after a commit', () => {

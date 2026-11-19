@@ -110,6 +110,14 @@ export interface Config {
      */
     maxSessions?: number;
     /**
+     * Seconds a warm session may sit unused before it is reclaimed.
+     *
+     * `0` disables reclamation. Each warm session is a subprocess, so a long
+     * conversation left open is memory the user may not need; the pool evicts it
+     * on the next sweep and the next turn rebuilds it cold.
+     */
+    sessionIdleSeconds?: number;
+    /**
      * Seconds a fetched CLI model catalog stays fresh before it is re-fetched.
      */
     modelCacheTtlSeconds?: number;
@@ -210,6 +218,7 @@ export declare const Config: z<Schemastery.ObjectS<NoInfer<{
     codebuddyModelAliases: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, "volatile-defined">;
     displayName: z<string, string, "volatile-defined">;
     maxSessions: z<number, number, "volatile-defined">;
+    sessionIdleSeconds: z<number, number, "volatile-defined">;
     modelCacheTtlSeconds: z<number, number, "volatile-defined">;
     modelAliases: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, "volatile-defined">;
     defaultReasoningEffort: z<string, string, "volatile-defined">;
@@ -239,6 +248,7 @@ export declare const Config: z<Schemastery.ObjectS<NoInfer<{
     codebuddyModelAliases: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, "volatile-defined">;
     displayName: z<string, string, "volatile-defined">;
     maxSessions: z<number, number, "volatile-defined">;
+    sessionIdleSeconds: z<number, number, "volatile-defined">;
     modelCacheTtlSeconds: z<number, number, "volatile-defined">;
     modelAliases: z<NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, "volatile-defined">;
     defaultReasoningEffort: z<string, string, "volatile-defined">;
@@ -258,6 +268,7 @@ export interface ResolvedConfig {
     codebuddyRegion: CodeBuddyRegion;
     displayName: string;
     maxSessions: number;
+    sessionIdleMs: number;
     modelCacheTtlMs: number;
     defaultMaxTokens: number;
     toolResultTimeoutMs: number;
@@ -282,10 +293,10 @@ export interface ResolvedConfig {
     codebuddyModelAliases: Readonly<Record<string, string>>;
 }
 /**
- * A parsed config as it arrives at `apply()`: every field wrapped in the
- * `Volatile<T>` reference its `.volatile()` schema produces.
+ * A parsed config as it arrives at pply(): every field wrapped in the
+ * Volatile<T> reference its .volatile() schema produces.
  *
- * Typed structurally rather than with `Volatile<T>` per field so the module
+ * Typed structurally rather than with Volatile<T> per field so the module
  * needs no import of the wrapper type, and so a plain (non-volatile) config
  * still satisfies it — which is what tests and direct callers pass.
  */
@@ -303,6 +314,50 @@ export type LiveConfig = {
     readonly [K in keyof ResolvedConfig]: () => ResolvedConfig[K];
 };
 /**
+ * Every authoring field and the resolved field it becomes.
+ *
+ * The `satisfies` clause is the compile-time half of the config contract: a
+ * field added to the schema (and therefore to `Config`) but not resolved here
+ * is an error, and the reverse check below catches a resolved field that no
+ * authoring field produces. It also keeps the unit-bearing renames
+ * (`*Seconds` → `*Ms`) in one place instead of scattering them across the
+ * mapping function and the docs. Exported for the runtime parity test.
+ */
+export declare const CONFIG_FIELD_MAP: {
+    readonly cnEnabled: "cnEnabled";
+    readonly intlEnabled: "intlEnabled";
+    readonly codebuddyEnabled: "codebuddyEnabled";
+    readonly disabledModels: "disabledModels";
+    readonly modelContextWindows: "modelContextWindows";
+    readonly modelAliases: "modelAliases";
+    readonly intlDisabledModels: "intlDisabledModels";
+    readonly intlModelContextWindows: "intlModelContextWindows";
+    readonly intlModelAliases: "intlModelAliases";
+    readonly intlDisplayName: "intlDisplayName";
+    readonly codebuddyRegion: "codebuddyRegion";
+    readonly codebuddyDisplayName: "codebuddyDisplayName";
+    readonly codebuddyGlobalDisabledModels: "codebuddyGlobalDisabledModels";
+    readonly codebuddyCnDisabledModels: "codebuddyCnDisabledModels";
+    readonly codebuddyGlobalModelContextWindows: "codebuddyGlobalModelContextWindows";
+    readonly codebuddyCnModelContextWindows: "codebuddyCnModelContextWindows";
+    readonly codebuddyModelAliases: "codebuddyModelAliases";
+    readonly displayName: "displayName";
+    readonly maxSessions: "maxSessions";
+    readonly sessionIdleSeconds: "sessionIdleMs";
+    readonly modelCacheTtlSeconds: "modelCacheTtlMs";
+    readonly defaultReasoningEffort: "defaultReasoningEffort";
+    readonly defaultMaxTokens: "defaultMaxTokens";
+    readonly toolResultTimeoutSeconds: "toolResultTimeoutMs";
+    readonly catalogFetchTimeoutSeconds: "catalogFetchTimeoutMs";
+    readonly abortGraceSeconds: "abortGraceMs";
+    readonly disposeDrainSeconds: "disposeDrainMs";
+    readonly traceEnabled: "traceEnabled";
+    readonly coldMaxTurns: "coldMaxTurns";
+};
+/** A type-level assertion that fails compilation when its argument is false. */
+type Assert<T extends true> = T;
+export type ResolvedConfigCoverage = Assert<Exclude<keyof ResolvedConfig, (typeof CONFIG_FIELD_MAP)[keyof typeof CONFIG_FIELD_MAP]> extends never ? true : false>;
+/**
  * Wrap a parsed config as {@link LiveConfig}.
  *
  * Every normalizer below is the single interpretation of a raw field: the
@@ -313,3 +368,4 @@ export type LiveConfig = {
  * @returns one thunk per resolved field, each reading the live cell.
  */
 export declare function liveConfig(config: ParsedConfig | undefined): LiveConfig;
+export {};

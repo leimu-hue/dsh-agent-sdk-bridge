@@ -38,7 +38,6 @@
 
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
-import * as cnSdk from '@qodercn-ai/qodercn-agent-sdk'
 import type * as QoderSdk from '@qodercn-ai/qodercn-agent-sdk'
 import type * as CodeBuddySdk from '@tencent-ai/agent-sdk'
 import type { CodeBuddyRegion, QoderBrand } from '../core/brand.ts'

@@ -27,6 +27,8 @@ import type { UsageSnapshot } from './usage.ts';
 export interface QoderAdapterOptions {
     /** Maximum simultaneously warm inner sessions (default 8). */
     maxSessions?: Live<number>;
+    /** How long an unused warm session may live before it is reclaimed. */
+    idleMs?: Live<number>;
     /** How long a fetched CLI model catalog stays fresh (default 5 min). */
     modelCacheTtlMs?: Live<number>;
     /** Request-image reader; absent → images are never forwarded as pixels. */

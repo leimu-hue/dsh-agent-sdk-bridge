@@ -18,7 +18,7 @@
  *   a bearer token beside the identity, and that object used to be persisted
  *   whole and handed to the settings page.
  */
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -57,7 +57,8 @@ const statePath = join(root, 'state.json')
 process.env.DSH_CODUBUDDY_CLI_DIR = root
 process.env.DSH_CODUBUDDY_STATE_PATH = statePath
 
-const { CodeBuddyAccountReader, CodeBuddyAuth, codeBuddyState } = await import('../../../src/host/providers/codebuddy/session.ts')
+const { CodeBuddyAccountReader, CodeBuddyAuth } = await import('../../../src/host/providers/codebuddy/account.ts')
+const { codeBuddyState } = await import('../../../src/host/providers/codebuddy/cli.ts')
 const { CodeBuddyStateStore } = await import('../../../src/host/infra/codebuddy-state.ts')
 
 afterEach(() => {

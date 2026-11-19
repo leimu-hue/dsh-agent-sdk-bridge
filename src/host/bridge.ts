@@ -104,6 +104,7 @@ export function createBridge(ctx: Context, live: LiveConfig): Bridge {
    */
   const shared = {
     maxSessions: live.maxSessions,
+    idleMs: live.sessionIdleMs,
     modelCacheTtlMs: live.modelCacheTtlMs,
     toolResultTimeoutMs: live.toolResultTimeoutMs,
     abortGraceMs: live.abortGraceMs,
@@ -164,6 +165,7 @@ export function createBridge(ctx: Context, live: LiveConfig): Bridge {
     }),
     codebuddy: new CodeBuddyAdapter({
       maxSessions: live.maxSessions,
+      idleMs: live.sessionIdleMs,
       modelCacheTtlMs: live.modelCacheTtlMs,
       catalogFetchTimeoutMs: live.catalogFetchTimeoutMs,
       toolResultTimeoutMs: live.toolResultTimeoutMs,

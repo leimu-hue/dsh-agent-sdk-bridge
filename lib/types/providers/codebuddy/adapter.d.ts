@@ -11,8 +11,9 @@
 import { LlmAdapter } from '@deepseek-ai/dsh-llm';
 import type { GenerateOptions, LlmModelInfo, LlmProviderInfo, LlmResolvedModelInfo, PreparedAdapterCall, StreamChunk } from '@deepseek-ai/dsh-llm';
 import type { CodeBuddyRegion } from '../../core/brand.ts';
-import { CodeBuddyAuth } from './session.ts';
-import type { CodeBuddyModel, CodeBuddyUsageSnapshot } from './session.ts';
+import { CodeBuddyAuth } from './account.ts';
+import type { CodeBuddyModel } from './catalog.ts';
+import type { CodeBuddyUsageSnapshot } from './account.ts';
 import type { ImageRequestReader } from '../../core/adapter-kit.ts';
 import type { Live } from '../../core/live.ts';
 import type { ImagePathResolver } from '../../core/render.ts';
@@ -21,6 +22,8 @@ export declare const CODEBUDDY_PROVIDER = "codebuddy";
 /** Everything the adapter reads lazily from the plugin config. */
 export interface CodeBuddyAdapterOptions {
     maxSessions?: Live<number>;
+    /** How long an unused warm session may live before it is reclaimed. */
+    idleMs?: Live<number>;
     modelCacheTtlMs?: Live<number>;
     catalogFetchTimeoutMs?: Live<number>;
     toolResultTimeoutMs?: Live<number>;

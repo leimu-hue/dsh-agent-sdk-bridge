@@ -13,7 +13,7 @@
  * @module dsh-agent-sdk-bridge/codebuddy-state
  */
 import type { CodeBuddyRegion } from '../core/brand.ts';
-import type { CodeBuddyAccount, CodeBuddyQuota, CodeBuddyUsageSnapshot } from '../providers/codebuddy/session.ts';
+import type { CodeBuddyAccount, CodeBuddyQuota, CodeBuddyUsageSnapshot } from '../providers/codebuddy/account.ts';
 /** The signed-in identity remembered for one region. */
 export interface CodeBuddySavedUser {
     userId: string;

@@ -26,6 +26,8 @@ export type CloseCause =
 'dispose'
 /** The pool needed the slot for another conversation. */
  | 'evicted'
+/** The session sat unused past its idle TTL. */
+ | 'idle'
 /** A login, logout or account switch replaced the credentials. */
  | 'account'
 /** The CodeBuddy login region changed. */

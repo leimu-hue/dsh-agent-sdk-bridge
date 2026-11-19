@@ -32,7 +32,8 @@ vi.mock('../../../src/host/infra/sdk.ts', () => ({
   codeBuddyEnvironment: (region: string) => region === 'cn' ? 'internal' : 'external',
 }))
 
-const { CodeBuddyAuth, codeBuddyState } = await import('../../../src/host/providers/codebuddy/session.ts')
+const { CodeBuddyAuth } = await import('../../../src/host/providers/codebuddy/account.ts')
+const { codeBuddyState } = await import('../../../src/host/providers/codebuddy/cli.ts')
 
 afterAll(() => { rmSync(fake.stateFile, { force: true }) })
 

@@ -122,6 +122,14 @@ export interface Config {
    */
   maxSessions?: number
   /**
+   * Seconds a warm session may sit unused before it is reclaimed.
+   *
+   * `0` disables reclamation. Each warm session is a subprocess, so a long
+   * conversation left open is memory the user may not need; the pool evicts it
+   * on the next sweep and the next turn rebuilds it cold.
+   */
+  sessionIdleSeconds?: number
+  /**
    * Seconds a fetched CLI model catalog stays fresh before it is re-fetched.
    */
   modelCacheTtlSeconds?: number
@@ -235,6 +243,7 @@ export const Config = z.object({
   // ── 高级：一般无需改动 ─────────────────────────────────────────────────
   displayName: z.string().default('Qoder CN').description('模型选择器里主分组的名称。同时使用多个 Qoder 账号时可区分。').volatile(),
   maxSessions: z.number().step(1).min(1).max(64).default(8).description('同时保持的空闲内层会话数上限，超出后按最久未使用关闭；进行中的轮次不会被驱逐。每个会话是一个子进程。').volatile(),
+  sessionIdleSeconds: z.number().step(1).min(0).max(86_400).default(600).description('空闲内层会话的回收时限（秒）。0 表示不回收；默认 600 秒。每个温会话是一个子进程，回收后下一轮会重建。').volatile(),
   modelCacheTtlSeconds: z.number().step(1).min(10).max(86_400).default(300).description('模型列表缓存时长（秒）。调小可更快看到账号侧变化。').volatile(),
   modelAliases: z.dict(z.string()).default({}).description('额外的模型别名映射：DSH 侧名称 → Qoder 模型 ID。内置 deepseek-v4-* 别名仍然生效。').volatile(),
   defaultReasoningEffort: z.string().default('').description('默认选用的思考档位；留空则用该模型支持的最强档位。').volatile(),
@@ -255,6 +264,7 @@ export interface ResolvedConfig {
   codebuddyRegion: CodeBuddyRegion
   displayName: string
   maxSessions: number
+  sessionIdleMs: number
   modelCacheTtlMs: number
   defaultMaxTokens: number
   toolResultTimeoutMs: number
@@ -280,10 +290,10 @@ export interface ResolvedConfig {
 }
 
 /**
- * A parsed config as it arrives at `apply()`: every field wrapped in the
- * `Volatile<T>` reference its `.volatile()` schema produces.
+ * A parsed config as it arrives at pply(): every field wrapped in the
+ * Volatile<T> reference its .volatile() schema produces.
  *
- * Typed structurally rather than with `Volatile<T>` per field so the module
+ * Typed structurally rather than with Volatile<T> per field so the module
  * needs no import of the wrapper type, and so a plain (non-volatile) config
  * still satisfies it — which is what tests and direct callers pass.
  */
@@ -297,6 +307,56 @@ export type ParsedConfig = { readonly [K in keyof Config]?: unknown }
  * that the loader commits in place is visible on the next read.
  */
 export type LiveConfig = { readonly [K in keyof ResolvedConfig]: () => ResolvedConfig[K] }
+
+/**
+ * Every authoring field and the resolved field it becomes.
+ *
+ * The `satisfies` clause is the compile-time half of the config contract: a
+ * field added to the schema (and therefore to `Config`) but not resolved here
+ * is an error, and the reverse check below catches a resolved field that no
+ * authoring field produces. It also keeps the unit-bearing renames
+ * (`*Seconds` → `*Ms`) in one place instead of scattering them across the
+ * mapping function and the docs. Exported for the runtime parity test.
+ */
+export const CONFIG_FIELD_MAP = {
+  cnEnabled: 'cnEnabled',
+  intlEnabled: 'intlEnabled',
+  codebuddyEnabled: 'codebuddyEnabled',
+  disabledModels: 'disabledModels',
+  modelContextWindows: 'modelContextWindows',
+  modelAliases: 'modelAliases',
+  intlDisabledModels: 'intlDisabledModels',
+  intlModelContextWindows: 'intlModelContextWindows',
+  intlModelAliases: 'intlModelAliases',
+  intlDisplayName: 'intlDisplayName',
+  codebuddyRegion: 'codebuddyRegion',
+  codebuddyDisplayName: 'codebuddyDisplayName',
+  codebuddyGlobalDisabledModels: 'codebuddyGlobalDisabledModels',
+  codebuddyCnDisabledModels: 'codebuddyCnDisabledModels',
+  codebuddyGlobalModelContextWindows: 'codebuddyGlobalModelContextWindows',
+  codebuddyCnModelContextWindows: 'codebuddyCnModelContextWindows',
+  codebuddyModelAliases: 'codebuddyModelAliases',
+  displayName: 'displayName',
+  maxSessions: 'maxSessions',
+  sessionIdleSeconds: 'sessionIdleMs',
+  modelCacheTtlSeconds: 'modelCacheTtlMs',
+  defaultReasoningEffort: 'defaultReasoningEffort',
+  defaultMaxTokens: 'defaultMaxTokens',
+  toolResultTimeoutSeconds: 'toolResultTimeoutMs',
+  catalogFetchTimeoutSeconds: 'catalogFetchTimeoutMs',
+  abortGraceSeconds: 'abortGraceMs',
+  disposeDrainSeconds: 'disposeDrainMs',
+  traceEnabled: 'traceEnabled',
+  coldMaxTurns: 'coldMaxTurns',
+} as const satisfies { [K in keyof Config]: keyof ResolvedConfig }
+
+/** A type-level assertion that fails compilation when its argument is false. */
+type Assert<T extends true> = T
+
+export type ResolvedConfigCoverage = Assert<
+  Exclude<keyof ResolvedConfig, (typeof CONFIG_FIELD_MAP)[keyof typeof CONFIG_FIELD_MAP]> extends never ? true : false
+>
+
 
 /**
  * Wrap a parsed config as {@link LiveConfig}.
@@ -353,6 +413,7 @@ export function liveConfig(config: ParsedConfig | undefined): LiveConfig {
     codebuddyRegion: () => field('codebuddyRegion') === 'cn' ? 'cn' : 'global',
     displayName: () => nonEmpty(field('displayName'), 'Qoder CN'),
     maxSessions: () => positive(field('maxSessions'), 8),
+    sessionIdleMs: () => nonNegative(field('sessionIdleSeconds'), 600) * 1_000,
     modelCacheTtlMs: () => positive(field('modelCacheTtlSeconds'), 300) * 1_000,
     defaultMaxTokens: () => positive(field('defaultMaxTokens'), 32_000),
     toolResultTimeoutMs: () => positive(field('toolResultTimeoutSeconds'), 120) * 1_000,

@@ -42,7 +42,7 @@ export interface CodeBuddyCardProps {
 
 /** The account card CodeBuddy's settings section renders. */
 export function CodeBuddyCard({
-  t, ctx, brand, refreshSignal, onSignedIn, onAuthChange, onRegionChange,
+  t, ctx, refreshSignal, onSignedIn, onAuthChange, onRegionChange,
 }: CodeBuddyCardProps): ReactElement {
   const form = ctx.configForms!.get('llm-qoder-cn')
   const subscribe = useCallback((listener: () => void) => form.subscribe(listener), [form])

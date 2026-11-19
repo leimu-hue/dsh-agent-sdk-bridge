@@ -13,21 +13,20 @@ import type {
   GenerateOptions, LlmModelInfo, LlmProviderInfo, LlmResolvedModelInfo,
   PreparedAdapterCall, StreamChunk,
 } from '@deepseek-ai/dsh-llm'
-import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { QoderBrand } from '../../core/brand.ts'
 import { brandProfile } from '../../core/brand.ts'
 import {
   DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_TOKENS, QODER_MODELS, resolveQoderModelId,
 } from '../../core/catalog.ts'
-import type { ResolvedConfig } from '../../core/config.ts'
 import type { Live } from '../../core/live.ts'
 import { readLive, readLiveOptional } from '../../core/live.ts'
 import { DEFAULT_MODEL_CACHE_TTL_MS, DEFAULT_FETCH_TIMEOUT_MS, QoderModelCatalog } from './models.ts'
 import { cachedModels } from '../../core/model-cache.ts'
 import { DEFAULT_MAX_SESSIONS } from '../../core/session-pool.ts'
-import { feedImageRefs, feedToText, imageRefText, imageRefs, renderInitialFeed, renderSideChannelFeed } from '../../core/render.ts'
+import { feedImageRefs, feedToText, imageRefText, renderInitialFeed, renderSideChannelFeed } from '../../core/render.ts'
 import type { Feed, ImagePathResolver } from '../../core/render.ts'
-import { QoderSession, QoderSessionManager } from './session.ts'
+import type { QoderSession } from './session.ts'
+import { QoderSessionManager } from './manager.ts'
 import { NO_ALIASES, NO_MODELS, modelInfo, planContinuation, reasoningInfo, resolveImages, resolveTurnImages } from '../../core/adapter-kit.ts'
 import type { ImageRequestReader } from '../../core/adapter-kit.ts'
 import type { ChannelContent, ResolvedImages } from '../../core/host-session.ts'
@@ -48,6 +47,8 @@ import { QoderUsage } from './usage.ts'
 export interface QoderAdapterOptions {
   /** Maximum simultaneously warm inner sessions (default 8). */
   maxSessions?: Live<number>
+  /** How long an unused warm session may live before it is reclaimed. */
+  idleMs?: Live<number>
   /** How long a fetched CLI model catalog stays fresh (default 5 min). */
   modelCacheTtlMs?: Live<number>
   /** Request-image reader; absent → images are never forwarded as pixels. */
@@ -272,7 +273,7 @@ export class QoderAdapter extends LlmAdapter {
       drainMs: options.drainMs,
       coldMaxTurns: options.coldMaxTurns,
       brand: this.brand,
-    })
+    }, undefined, options.idleMs)
     this.catalog = new QoderModelCatalog(
       this.brand,
       options.modelCacheTtlMs ?? DEFAULT_MODEL_CACHE_TTL_MS,

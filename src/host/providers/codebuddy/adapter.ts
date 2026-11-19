@@ -12,11 +12,15 @@
 import { LlmAdapter } from '@deepseek-ai/dsh-llm'
 import type {
   GenerateOptions, LlmModelInfo, LlmProviderInfo, LlmResolvedModelInfo,
-  PreparedAdapterCall, RequestMessage, StreamChunk,
+  PreparedAdapterCall, StreamChunk,
 } from '@deepseek-ai/dsh-llm'
 import type { CodeBuddyRegion } from '../../core/brand.ts'
-import { codeBuddyColdStream, CodeBuddyAccountReader, CodeBuddyAuth, CodeBuddyCatalog, CodeBuddySessionManager, CODEBUDDY_DEFAULT_CONTEXT_WINDOW, CODEBUDDY_DEFAULT_MAX_TOKENS, CODEBUDDY_CACHE_TTL_MS, CODEBUDDY_FETCH_TIMEOUT_MS } from './session.ts'
-import type { CodeBuddyModel, CodeBuddyUsageSnapshot } from './session.ts'
+import { codeBuddyColdStream, CodeBuddySessionManager, CODEBUDDY_DEFAULT_MAX_TOKENS } from './session.ts'
+import { CodeBuddyAccountReader, CodeBuddyAuth } from './account.ts'
+import { CodeBuddyCatalog, CODEBUDDY_DEFAULT_CONTEXT_WINDOW } from './catalog.ts'
+import { CODEBUDDY_CACHE_TTL_MS, CODEBUDDY_FETCH_TIMEOUT_MS } from './cli.ts'
+import type { CodeBuddyModel } from './catalog.ts'
+import type { CodeBuddyUsageSnapshot } from './account.ts'
 import {
   DenyList, NO_ALIASES, NO_MODELS, buildVisionFeed, modelInfo, planContinuation, reasoningInfo,
   resolveAliasedModelId, resolveTurnImages,
@@ -36,6 +40,8 @@ export const CODEBUDDY_PROVIDER = 'codebuddy'
 /** Everything the adapter reads lazily from the plugin config. */
 export interface CodeBuddyAdapterOptions {
   maxSessions?: Live<number>
+  /** How long an unused warm session may live before it is reclaimed. */
+  idleMs?: Live<number>
   modelCacheTtlMs?: Live<number>
   catalogFetchTimeoutMs?: Live<number>
   toolResultTimeoutMs?: Live<number>
@@ -104,7 +110,7 @@ export class CodeBuddyAdapter extends LlmAdapter {
       toolResultTimeoutMs: options.toolResultTimeoutMs,
       abortGraceMs: options.abortGraceMs,
       drainMs: options.drainMs,
-    })
+    }, undefined, options.idleMs)
     this.catalog = new CodeBuddyCatalog(
       options.region ?? (() => 'global'),
       options.modelCacheTtlMs ?? CODEBUDDY_CACHE_TTL_MS,
@@ -114,7 +120,6 @@ export class CodeBuddyAdapter extends LlmAdapter {
     )
     this.accounts = new CodeBuddyAccountReader(
       options.region ?? (() => 'global'),
-      options.modelCacheTtlMs ?? CODEBUDDY_CACHE_TTL_MS,
       options.catalogFetchTimeoutMs ?? CODEBUDDY_FETCH_TIMEOUT_MS,
     )
   }

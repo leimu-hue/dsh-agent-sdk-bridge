@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'vitest'
 import type { CloseCause } from '../../src/host/core/lifecycle.ts'
 import { SessionPool } from '../../src/host/core/session-pool.ts'
-import { QoderSessionManager } from '../../src/host/providers/qoder/session.ts'
+import { QoderSessionManager } from '../../src/host/providers/qoder/manager.ts'
 import type { QoderSession } from '../../src/host/providers/qoder/session.ts'
 import { CodeBuddySessionManager } from '../../src/host/providers/codebuddy/session.ts'
 import type { CodeBuddySession } from '../../src/host/providers/codebuddy/session.ts'
@@ -170,5 +170,36 @@ describe('shared session pool', () => {
     const pool = new SessionPool<FakeSession>({ label: 'demo', maxSessions: 1 })
     pool.seal()
     expect(() => pool.forSession('a', id => new FakeSession(id))).toThrow(/demo 会话池已封存/)
+  })
+})
+describe('idle sweep', () => {
+  it('closes only sessions unused past the ttl and leaves busy ones alone', () => {
+    const created: FakeSession[] = []
+    const pool = new SessionPool<FakeSession>({ label: 'idle', maxSessions: 8, idleMs: 1_000 })
+    const stale = pool.forSession('stale', id => {
+      const fake = new FakeSession(id)
+      created.push(fake)
+      return fake
+    })
+    const busy = pool.forSession('busy', id => {
+      const fake = new FakeSession(id)
+      created.push(fake)
+      return fake
+    })
+    busy.busy = true
+
+    pool.sweepIdle(Date.now() + 1_500)
+    expect(stale.closedWith).toBe('idle')
+    expect(busy.closedWith).toBeUndefined()
+    expect(pool.size).toBe(1)
+    pool.seal()
+  })
+
+  it('does nothing when reclamation is disabled', () => {
+    const pool = new SessionPool<FakeSession>({ label: 'idle', maxSessions: 8, idleMs: 0 })
+    const session = pool.forSession('a', id => new FakeSession(id))
+    pool.sweepIdle(Date.now() + 10_000_000)
+    expect(session.closedWith).toBeUndefined()
+    pool.seal()
   })
 })

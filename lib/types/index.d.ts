@@ -58,6 +58,7 @@ export declare const Config: import("@deepseek-ai/schemastery").default<Schemast
     codebuddyModelAliases: import("@deepseek-ai/schemastery").default<NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, "volatile-defined">;
     displayName: import("@deepseek-ai/schemastery").default<string, string, "volatile-defined">;
     maxSessions: import("@deepseek-ai/schemastery").default<number, number, "volatile-defined">;
+    sessionIdleSeconds: import("@deepseek-ai/schemastery").default<number, number, "volatile-defined">;
     modelCacheTtlSeconds: import("@deepseek-ai/schemastery").default<number, number, "volatile-defined">;
     modelAliases: import("@deepseek-ai/schemastery").default<NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, "volatile-defined">;
     defaultReasoningEffort: import("@deepseek-ai/schemastery").default<string, string, "volatile-defined">;
@@ -87,6 +88,7 @@ export declare const Config: import("@deepseek-ai/schemastery").default<Schemast
     codebuddyModelAliases: import("@deepseek-ai/schemastery").default<NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, "volatile-defined">;
     displayName: import("@deepseek-ai/schemastery").default<string, string, "volatile-defined">;
     maxSessions: import("@deepseek-ai/schemastery").default<number, number, "volatile-defined">;
+    sessionIdleSeconds: import("@deepseek-ai/schemastery").default<number, number, "volatile-defined">;
     modelCacheTtlSeconds: import("@deepseek-ai/schemastery").default<number, number, "volatile-defined">;
     modelAliases: import("@deepseek-ai/schemastery").default<NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, NoInfer<import("@deepseek-ai/cosmokit").Dict<string, string>>, "volatile-defined">;
     defaultReasoningEffort: import("@deepseek-ai/schemastery").default<string, string, "volatile-defined">;
