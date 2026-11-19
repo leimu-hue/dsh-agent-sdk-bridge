@@ -74,6 +74,7 @@ export const ADVANCED: Record<'cn' | 'global' | 'codebuddy', AdvancedFields> = {
   cn: [
     ['displayName', 'text'],
     ['maxSessions', 'number'],
+    ['sessionIdleSeconds', 'number'],
     ['modelCacheTtlSeconds', 'number'],
     ['defaultReasoningEffort', 'text'],
     ['defaultMaxTokens', 'number'],

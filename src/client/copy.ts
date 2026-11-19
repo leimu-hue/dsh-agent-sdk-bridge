@@ -124,6 +124,7 @@ export const zh = {
   advancedFields: {
     displayName: '分组名称',
     maxSessions: '并发会话数',
+    sessionIdleSeconds: '空闲会话回收（秒，0 关闭）',
     modelCacheTtlSeconds: '模型列表缓存（秒）',
     defaultReasoningEffort: '默认思考档位',
     defaultMaxTokens: '默认输出上限',
@@ -256,6 +257,7 @@ export const en: CopyTable = {
   advancedFields: {
     displayName: 'Group name',
     maxSessions: 'Concurrent sessions',
+    sessionIdleSeconds: 'Idle session TTL (s, 0 off)',
     modelCacheTtlSeconds: 'Catalog cache (s)',
     defaultReasoningEffort: 'Default reasoning effort',
     defaultMaxTokens: 'Default output cap',
